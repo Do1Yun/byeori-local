@@ -98,3 +98,14 @@ def test_a_trial_run_stops_at_the_limit():
 @pytest.mark.parametrize("folder", ["wiki/lab-questions/", "papers/", "index/", "runs/lab-questions/"])
 def test_the_tool_never_lists_a_folder_outside_the_indexed_layers(folder):
     assert not any(indexed.startswith(folder) for indexed in links.INDEXED_FOLDERS)
+
+
+def test_a_page_with_the_korean_section_gets_it_replaced_in_place_not_a_second_one():
+    old = NOTE.rstrip("\n") + "\n\n## 랩 질문\n\n- 이 페이지를 근거로 답한 랩 질문: [[lab-questions/by-page/sources/paper-one]]\n"
+
+    assert links.needs_line(old, "sources/paper-one") is True
+    out = links.add_line(old, "sources/paper-one")
+
+    assert out == NOTE.rstrip("\n") + f"\n\n{links.HEADING}\n\n{page_link_line('sources/paper-one')}\n"
+    assert "랩 질문" not in out and out.count(links.HEADING) == 1
+    assert links.needs_line(out, "sources/paper-one") is False

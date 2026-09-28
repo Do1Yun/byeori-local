@@ -1,6 +1,6 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "Byeori student question service (docs/LAB-QUESTION-WORKFLOW.md): AWS_IAM Function URL gateway, answer-only, triage and approved-research workers over the shared wiki, control table and queues. Only the research worker may write wiki pages, and only inside an approval's scope; no function may write papers/ or index/. The research event source is created only when ResearchConsumerEnabled is true.",
+  "Description": "Byeori student question service (docs/LAB-SERVICE.md): AWS_IAM Function URL gateway, answer-only, triage and approved-research workers over the shared wiki, control table and queues. Only the research worker may write wiki pages, and only inside an approval's scope; no function may write papers/ or index/. The research event source is created only when ResearchConsumerEnabled is true.",
   "Parameters": {
     "DataBucket": {
       "Type": "String",

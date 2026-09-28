@@ -34,7 +34,7 @@ from typing import Any
 
 from byeori.lab_store import ANSWER_PAGE_PREFIX, ConditionFailed, PageWriter, now_iso
 
-__all__ = ["HUB_PREFIX", "answer_page_key", "hub_key", "link_of", "page_link_line",
+__all__ = ["HUB_PREFIX", "answer_page_key", "hub_key", "legacy_link_line", "link_of", "page_link_line",
            "publish_answer", "render_answer_page"]
 
 HUB_PREFIX = f"{ANSWER_PAGE_PREFIX}by-page/"
@@ -71,6 +71,11 @@ def hub_key(link: str) -> str:
 
 def page_link_line(link: str) -> str:
     """The one standing line an indexed page carries, pointing at its own hub of lab questions."""
+    return f"- [[lab-questions/by-page/{link}|Answered questions that cited this page]]"
+
+
+def legacy_link_line(link: str) -> str:
+    """The Korean line pages carried until 2026-09-26, which ``wiki_question_links`` replaces."""
     return f"- 이 페이지를 근거로 답한 랩 질문: [[lab-questions/by-page/{link}]]"
 
 
@@ -124,40 +129,40 @@ def render_answer_page(answer: Mapping[str, Any], *, question: str, job_id: str,
             front.append(f"{name}: {_quote(value)}")
     front.append("---")
 
-    body = [f"# {title}", "", "## 질문", "", _WHITESPACE.sub(" ", str(question or "")).strip(), ""]
+    body = [f"# {title}", "", "## Question", "", _WHITESPACE.sub(" ", str(question or "")).strip(), ""]
     text = str(answer.get("answer") or "").strip()
-    body += ["## 답변", "", text or "_이 질문에는 답변 본문이 저장되지 않았습니다._", ""]
+    body += ["## Answer", "", text or "_No answer text was saved for this question._", ""]
 
     citations = _citation_lines(answer.get("citations") or ())
-    body += ["## 근거", ""] + (citations or ["- _인용 없음_"]) + [""]
+    body += ["## Evidence", ""] + (citations or ["- _No citations_"]) + [""]
 
     limitations = [f"- {_one_line(item, 400)}" for item in (answer.get("limitations") or ())
                    if _one_line(item, 400)]
     if limitations:
-        body += ["## 한계", ""] + limitations + [""]
+        body += ["## Limitations", ""] + limitations + [""]
 
     unresolved = [f"- {_one_line(item, 400)}" for item in (answer.get("unresolved_items") or ())
                   if _one_line(item, 400)]
     if unresolved:
-        body += ["## 남은 질문", ""] + unresolved + [""]
+        body += ["## Open Questions", ""] + unresolved + [""]
 
-    body += ["---", "", f"실행 기록: `runs/lab-questions/{job_id}/`", ""]
+    body += ["---", "", f"Run record: `runs/lab-questions/{job_id}/`", ""]
     return "\n".join(front + [""] + body)
 
 
 def _render_hub(link: str, entries: Sequence[str]) -> str:
     return "\n".join([
         "---",
-        f"title: {_quote(link + ' 을 근거로 답한 랩 질문')}",
+        f"title: {_quote('Questions whose answers cited ' + link)}",
         'category: "lab-questions"',
         'kind: "page-question-hub"',
         "indexed: false",
         f"page: {_quote('wiki/' + link + '.md')}",
         "---",
         "",
-        f"# [[{link}]] 을 근거로 답한 질문",
+        f"# Questions whose answers cited [[{link}]]",
         "",
-        "이 목록은 검색 색인에 들어가지 않습니다. 색인된 페이지에서 질문으로 내려오는 길입니다.",
+        "This list is not in the search index; it leads from an indexed page to the answered questions that cited it.",
         "",
         *entries,
         "",

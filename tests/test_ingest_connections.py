@@ -37,11 +37,12 @@ def load_lambda(cloud=None):
     # the namespace and the call fails with NameError.
     functions = {"_read_published", "_source_note", "_synthesize", "_answer_question",
                  "_document_information", "_llm_wiki_frontmatter", "_model_family", "_yaml_scalar",
-                 "_source_collection", "_strip_reporting_summary", "_model_slug", "_note_models"}
+                 "_source_collection", "_strip_reporting_summary", "_model_slug", "_note_models",
+                 "_rewritten_frontmatter"}
     constants = {"SOURCE_NOTE_SECTIONS", "SOURCE_NOTE_SYSTEM", "TOPIC_SECTIONS", "TOPIC_SYSTEM",
                  "MAX_TOPIC_NOTES", "WORK_ID_PATTERN", "INGEST_AGENT", "INGEST_AGENT_VERSION",
                  "WRITE_NOW", "REPORTING_SUMMARY_MARKERS", "REPORTING_SUMMARY_MIN_OFFSET",
-                 "TRIAL_RUN_PATTERN"}
+                 "TRIAL_RUN_PATTERN", "NOTE_REVISION_FIELDS"}
     selected = [node for node in tree.body
                 if isinstance(node, ast.FunctionDef) and node.name in functions
                 or isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)

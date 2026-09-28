@@ -96,13 +96,21 @@ DEG = [["Supplementary Data 3: DEGs per cell type"], [],
        ["GFAP", "Astro", 3.1, 1e-30]]
 
 
-def world(files: dict[str, bytes], *, kept: dict[str, bool] | None = None) -> RangeS3:
+def world(files: dict[str, bytes], *, kept: dict[str, bool | str] | None = None) -> RangeS3:
+    """``kept``: True (stored), False (skipped) or ``"resource"`` (in the lab's Resources folder only)."""
     kept = kept or {}
+
+    def decision(name):
+        value = kept.get(name, True)
+        return value if isinstance(value, str) else ("upload" if value else "skip")
+
     manifest = {"stem": STEM, "guide": f"papers/{STEM}/supplementary/README.md",
+                "resources_folder": f"Projects/Resources/{STEM}/",
                 "files": [{"file": name, "bytes": len(data), "sha256": "x" * 64, "kind": "data_table",
-                           "decision": "upload" if kept.get(name, True) else "skip", "label": name,
+                           "decision": decision(name), "label": name,
                            "uses": ["gene_sets"], "summary": "s"} for name, data in files.items()]}
-    objects = {f"papers/{STEM}/supplementary/{name}": data for name, data in files.items() if kept.get(name, True)}
+    objects = {f"papers/{STEM}/supplementary/{name}": data for name, data in files.items()
+               if decision(name) == "upload"}
     objects[f"papers/{STEM}/supplementary/manifest.json"] = json.dumps(manifest)
     objects[f"papers/{STEM}/supplementary/README.md"] = "# Supplementary files\n\n" + "guide text " * 50
     return RangeS3(objects)
@@ -285,6 +293,29 @@ def test_the_guide_is_read_in_windows_with_the_kept_files():
     assert first["text"].startswith("# Supplementary files") and len(first["text"]) == 100
     assert rest["next_start"] is None and first["text"] + rest["text"] == first["text"] + rest["text"]
     assert [f["file"] for f in first["files"]] == ["deg.xlsx"] and first["files"][0]["readable"] is True
+
+
+def test_files_kept_only_in_the_resources_folder_are_listed_as_not_stored_and_not_opened():
+    read, _ = reader({"deg.xlsx": workbook({"DEG": DEG}), "big.xlsx": b"PK"}, kept={"big.xlsx": "resource"})
+
+    listed = {f["file"]: f for f in read.guide(STEM)["files"]}
+
+    assert listed["deg.xlsx"]["readable"] is True and "stored" not in listed["deg.xlsx"]
+    assert listed["big.xlsx"]["readable"] is False and listed["big.xlsx"]["stored"] is False
+    assert listed["big.xlsx"]["where"] == f"Projects/Resources/{STEM}/"
+    with pytest.raises(sr.ReadError, match="not stored here"):
+        read.table(STEM, "big.xlsx")
+    skipped = {s["file"]: s["reason"] for s in read.search(STEM, "SNCA")["skipped"]}
+    assert skipped["big.xlsx"] == f"kept in Projects/Resources/{STEM}/, not stored here"
+
+
+def test_has_supplementary_needs_a_kept_file_not_only_a_manifest():
+    stored, _ = reader({"deg.xlsx": workbook({"DEG": DEG})})
+    resources_only, _ = reader({"big.xlsx": b"PK"}, kept={"big.xlsx": "resource"})
+
+    assert stored.has_supplementary(STEM) is True
+    assert resources_only.has_supplementary(STEM) is False
+    assert stored.has_supplementary("other-2020-paper") is False
 
 
 def test_a_scan_stops_at_its_deadline_and_says_so(monkeypatch):

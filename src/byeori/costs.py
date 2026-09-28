@@ -3,7 +3,7 @@
 Prices are Anthropic first-party list prices per one million tokens (cached 2026-06-24).
 Amazon Bedrock bills separately and its rates were not machine-readable when this was written,
 so every figure derived here is an estimate until Cost Explorer confirms it. See
-docs/COST-ESTIMATE.md.
+docs/records/cost-estimate.md.
 """
 from __future__ import annotations
 

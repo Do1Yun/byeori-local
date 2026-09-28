@@ -450,7 +450,25 @@ def command_read_extraction(settings: Settings, args: argparse.Namespace) -> int
 def command_publish_source_note(settings: Settings, args: argparse.Namespace) -> int:
     """Publish a note written in this session, for a paper that has none."""
     body = args.markdown.read_text(encoding="utf-8")
-    result = AwsStore(settings).publish_source_note(args.stem, body, model_id=args.model_id)
+    result = AwsStore(settings).publish_source_note(args.stem, body, model_id=args.model_id,
+                                                    reasoning=args.reasoning)
+    print_json({k: v for k, v in result.items() if k != "publication"})
+    return 0 if result.get("published") else 1
+
+
+def command_set_note_reasoning(settings: Settings, args: argparse.Namespace) -> int:
+    """Record the reasoning level on a local note that was published as `default`."""
+    result = AwsStore(settings).set_local_note_reasoning(args.stem, reasoning=args.reasoning,
+                                                         expected_sha256=args.expected_sha256)
+    print_json(result)
+    return 0 if result.get("published") else 1
+
+
+def command_revise_source_note(settings: Settings, args: argparse.Namespace) -> int:
+    """Correct a published note from exact replacements made in this session."""
+    replacements = json.loads(args.replacements.read_text(encoding="utf-8"))
+    result = AwsStore(settings).revise_source_note(args.stem, replacements, model_id=args.model_id,
+                                                   reason=args.reason, expected_sha256=args.expected_sha256)
     print_json({k: v for k, v in result.items() if k != "publication"})
     return 0 if result.get("published") else 1
 
@@ -531,6 +549,12 @@ def command_fields(settings: Settings, args: argparse.Namespace) -> int:
 def command_sync_note_categories(settings: Settings, args: argparse.Namespace) -> int:
     """Make the catalogue agree with the notes about which field each one is in."""
     print_json(AwsStore(settings).sync_note_categories(apply=args.apply))
+    return 0
+
+
+def command_supersede_note(settings: Settings, args: argparse.Namespace) -> int:
+    """Take one of two notes of the same paper out of the wiki; see ingest_lambda._supersede_note."""
+    print_json(AwsStore(settings).supersede_note(args.drop, args.keep, apply=args.apply, why=args.why))
     return 0
 
 
@@ -957,7 +981,30 @@ def build_parser() -> argparse.ArgumentParser:
     publish_parser.add_argument("markdown", type=Path, help="the seven sections, no frontmatter")
     publish_parser.add_argument("--model-id", default="claude-opus-5",
                                 help="the model that actually wrote the note")
+    publish_parser.add_argument("--reasoning", required=True, choices=("low", "medium", "high", "xhigh", "max"),
+                                help="the writing agent's reasoning (effort) level")
     publish_parser.set_defaults(handler=command_publish_source_note)
+
+    reasoning_parser = subparsers.add_parser(
+        "aws-set-note-reasoning",
+        help="record the reasoning level on a local note published as `default`")
+    reasoning_parser.add_argument("stem")
+    reasoning_parser.add_argument("--reasoning", required=True, choices=("low", "medium", "high", "xhigh", "max"))
+    reasoning_parser.add_argument("--expected-sha256", required=True, help="the note's sha256 as read")
+    reasoning_parser.set_defaults(handler=command_set_note_reasoning)
+
+    revise_parser = subparsers.add_parser(
+        "aws-revise-source-note",
+        help="correct a published evidence note from exact replacements made in this session")
+    revise_parser.add_argument("stem")
+    revise_parser.add_argument("replacements", type=Path,
+                               help='JSON list of {"old": ..., "new": ...}; each old occurs once in the note')
+    revise_parser.add_argument("--expected-sha256", required=True,
+                               help="the note's sha256 as read with wiki-read; a moved note is refused")
+    revise_parser.add_argument("--reason", required=True, help="what was wrong, in one sentence")
+    revise_parser.add_argument("--model-id", default="claude-opus-5-5",
+                               help="the model that made the corrections")
+    revise_parser.set_defaults(handler=command_revise_source_note)
 
     catalogs_parser = subparsers.add_parser(
         "aws-build-category-catalogs",
@@ -987,6 +1034,15 @@ def build_parser() -> argparse.ArgumentParser:
     classify_parser.add_argument("--apply", action="store_true", help="write; without it the run only reports")
     classify_parser.add_argument("--receipt", type=Path, default=None)
     classify_parser.set_defaults(handler=command_classify_notes)
+
+    supersede_parser = subparsers.add_parser(
+        "aws-supersede-note",
+        help="take one of two notes of the same paper out of the wiki and point what cited it at the other")
+    supersede_parser.add_argument("--drop", required=True, help="the stem whose note goes (the preprint or older version)")
+    supersede_parser.add_argument("--keep", required=True, help="the stem whose note stays")
+    supersede_parser.add_argument("--why", help="recorded on the retired row")
+    supersede_parser.add_argument("--apply", action="store_true", help="write; without it the run only reports")
+    supersede_parser.set_defaults(handler=command_supersede_note)
 
     sync_parser = subparsers.add_parser(
         "aws-sync-note-categories",

@@ -1,4 +1,4 @@
-"""Student MCP client for the lab Function URL (docs/LAB-QUESTION-WORKFLOW.md, section 4).
+"""Student MCP client for the lab Function URL (docs/LAB-SERVICE.md, section 4).
 
 The server owns identity, evidence selection, model calls and every record. This client signs
 one POST per tool call with the student's own AWS credentials (SigV4, service ``lambda``),

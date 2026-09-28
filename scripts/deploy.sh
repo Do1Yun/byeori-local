@@ -22,8 +22,21 @@
 # at high, with SynthesisFallbackModelId (Opus 5, same effort) writing whatever it declines.
 #
 # Later that day the user put every model back on Opus 5 for the time being, because of Opus 5.5's
-# safety filtering ("우리 사용을 당분간 모두 5로 합시다"). NoteModelId and SynthesisModelId name Opus 5;
-# with the fallback equal to the model, no fallback call is ever made. The switch stays one value.
+# safety filtering ("우리 사용을 당분간 모두 5로 합시다").
+#
+# Notes went back to Opus 5.5 at high on 2026-09-25, after synthesis did. What decided it: Opus 5
+# had declined klein-2023-genot three times with content_filtered and Opus 5.5 wrote it in one call,
+# 88 seconds, seven sections, $0.38. Refusal is not a property of the model but of the pairing, so
+# NoteFallbackModelId stays Opus 5 and writes whatever 5.5 declines - the 2026-09-23 measurement of
+# 9 declines in 40 notes is the rate that fallback now absorbs, and source_note_written_by records
+# which model wrote each one.
+#
+# Synthesis went back to Opus 5.5 at high on 2026-09-24. The 2026-09-23 refusals were at xhigh; a
+# trial page at high (spatial-seq/pretrained-foundation-models, the same page Opus 5 had written)
+# came back ready in one call, 20% cheaper, and found what Opus 5 had missed - that HEIST attributes
+# scGPT-spatial's advantage to pretraining on the evaluation dataset and admits overlap with its own
+# baselines. SynthesisFallbackModelId stays Opus 5, so a page 5.5 declines is written by 5 in the
+# same call and the run's fallback_calls counts how often that happens.
 set -euo pipefail
 : "${AWS_KIRO_WIKI_BUCKET:?source .byeori.env first}"
 : "${KIRO_WIKI_STACK:?source .byeori.env first}"
@@ -61,9 +74,9 @@ aws cloudformation deploy \
     OpenAlexApiKeyParameterName="$KIRO_WIKI_OPENALEX_PARAMETER" \
     ContactEmail="${KIRO_WIKI_CONTACT_EMAIL:-}" \
     DraftModelId=global.anthropic.claude-opus-5 \
-    NoteModelId=global.anthropic.claude-opus-5 \
+    NoteModelId=global.anthropic.claude-opus-5-5 \
     NoteFallbackModelId=global.anthropic.claude-opus-5 \
-    SynthesisModelId=global.anthropic.claude-opus-5 \
+    SynthesisModelId=global.anthropic.claude-opus-5-5 \
     SynthesisFallbackModelId=global.anthropic.claude-opus-5 \
     SynthesisReasoning=high \
     IngestReasoning=high \

@@ -1,4 +1,4 @@
-"""Professor-side review of question records (docs/LAB-QUESTION-WORKFLOW.md, sections 6 and 7).
+"""Professor-side review of question records (docs/LAB-SERVICE.md, sections 6 and 7).
 
 Every question keeps its record whether or not Jev scored it above the cutoff, whether the
 student accepted, declined or ignored an offer, and whether the budget let it run at all. This

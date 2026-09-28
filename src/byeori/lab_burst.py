@@ -1,4 +1,4 @@
-"""Concurrent-session validation of the lab Function URL (docs/LAB-QUESTION-WORKFLOW.md, P5).
+"""Concurrent-session validation of the lab Function URL (docs/LAB-SERVICE.md, P5).
 
 The design requires, before the beta opens, that 25 independent sessions submit, poll and search
 at once so cold/warm latency, p50/p95, queue wait, throttling and cumulative cost contention are

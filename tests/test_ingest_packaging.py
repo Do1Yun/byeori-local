@@ -353,6 +353,18 @@ except ValueError:
 else:
     raise AssertionError('filed into a field this wiki does not have')
 
+# an old note with no `category:` line at all gets one, rather than being refused: the index reads
+# those as the field `note`, which is where that pseudo-field came from
+objects['wiki/sources/old.md'] = (
+    '---\nwork_id: "W1992748173"\ntitle: "CHD8 regulates other autism risk genes"\n'
+    'ingest_harness: aws-lambda-bedrock\n---\n\n## Results\nMeasured.\n').encode()
+etags['wiki/sources/old.md'] = '"old"'
+filed = handler({'action': 'file_notes', 'stems': ['old'], 'category': 'single-cell-dl', 'apply': True}, None)
+assert filed['states'] == {'filed': 1}, filed
+assert b'category: "single-cell-dl"' in objects['wiki/sources/old.md']
+assert b'## Results' in objects['wiki/sources/old.md']
+assert objects['wiki/sources/old.md'].count(b'category:') == 1
+
 # a page's own kind is never a field, however many notes carry it as one
 try:
     handler({'action': 'file_notes', 'stems': ['a'], 'category': 'note'}, None)
@@ -487,16 +499,22 @@ sections = ['## One-line Summary', '## 2. Key Contributions', '## 3. Methodology
             '## 6. Related Work', '## 7. Glossary']
 body = '\n\n'.join(s + '\n\n' + ('Skipping a uORF exon raised protein 1.4 to 5.5-fold. ' * 8) for s in sections)
 bad = handler({'action': 'publish_source_note', 'stem': stem, 'markdown': '## One-line Summary\n\nToo short.',
-               'model_id': 'claude-opus-5'}, None)
+               'model_id': 'claude-opus-5', 'reasoning': 'high'}, None)
 assert bad['status'] == 'source_failed' and bad['published'] is False and bad['problems']
 assert 'wiki/sources/%s.md' % stem not in written
+try:
+    handler({'action': 'publish_source_note', 'stem': stem, 'markdown': body, 'model_id': 'claude-opus-5'}, None)
+    raise AssertionError('a local note must name its reasoning level')
+except ValueError as exc:
+    assert 'reasoning' in str(exc), exc
 ok = handler({'action': 'publish_source_note', 'stem': stem, 'markdown': body,
-              'model_id': 'claude-opus-5'}, None)
+              'model_id': 'claude-opus-5', 'reasoning': 'high'}, None)
 assert ok['published'] and ok['status'] == 'source_ready', ok
 page = written['wiki/sources/%s.md' % stem].decode()
 assert 'ingest_harness: "claude-code"' in page and 'ingest_agent: "byeori-note-local"' in page
 assert 'aws-bedrock' not in page
 assert 'ingest_model: "opus"' in page and 'ingest_model_id: "claude-opus-5"' in page
+assert 'ingest_reasoning: "high"' in page and 'ingest_reasoning: "default"' not in page
 assert '## 1. Document Information' in page and 'Modulating splicing' in page
 expression = catalog.update_item.call_args.kwargs['UpdateExpression']
 assert 'REMOVE source_note_input_tokens' in expression, 'no token count may be invented'
@@ -508,10 +526,303 @@ catalog.get_item.return_value = {'Item': {'work_id': stem, 'id_kind': 'stem',
                                           'source_note_key': 'wiki/sources/%s.md' % stem,
                                           'source_note_status': 'source_ready'}}
 try:
-    handler({'action': 'publish_source_note', 'stem': stem, 'markdown': body, 'model_id': 'claude-opus-5'}, None)
+    handler({'action': 'publish_source_note', 'stem': stem, 'markdown': body, 'model_id': 'claude-opus-5',
+             'reasoning': 'high'}, None)
     raise AssertionError('a paper with a note must be refused')
 except ValueError as exc:
     assert 'first note' in str(exc), exc
+print('ok')
+'''
+    env = {**os.environ, 'BUCKET_NAME': 'bucket', 'TABLE_NAME': 'table',
+           'OPENALEX_API_KEY_PARAMETER': 'parameter', 'AWS_DEFAULT_REGION': 'us-east-1'}
+    result = subprocess.run([sys.executable, '-c', code, str(package)], cwd=tmp_path,
+                            env=env, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+
+
+def test_zip_handler_revises_a_published_note_from_exact_replacements(tmp_path):
+    """A defect found after publishing is fixed where it is (user, 2026-09-25): exact replacements,
+    the note as read, and a frontmatter that keeps the first writer and names the reviser."""
+    source = Path(__file__).parents[1] / 'src'
+    package = tmp_path / 'ingest.zip'
+    with zipfile.ZipFile(package, 'w') as archive:
+        for path in list(source.rglob('*.py')) + list(source.rglob('*.json')):
+            archive.write(path, path.relative_to(source))
+    code = r'''
+import sys, io, json, zipfile, hashlib
+from pathlib import Path
+import boto3
+from unittest.mock import MagicMock
+from botocore.exceptions import ClientError
+stem = 'chamma-2025-methyl-cpg-binding-protein-inhibits-cgas'
+key = 'wiki/sources/%s.md' % stem
+objects = {'papers/%s/clean.md' % stem: b'# Paper\n',
+           'papers/%s/meta.json' % stem: json.dumps({'stem': stem, 'title': 'MeCP2 inhibits cGAS',
+                                                     'authors': 'Chamma', 'year': '2025',
+                                                     'doi': '10.1/mecp2', 'category': 'neuroimmune'}).encode()}
+cloud = MagicMock()
+def get_object(**kw):
+    if kw['Key'] not in objects:
+        raise ClientError({'Error': {'Code': 'NoSuchKey'}}, 'GetObject')
+    return {'Body': io.BytesIO(objects[kw['Key']]), 'ETag': '"e"'}
+def put_object(**kw):
+    body = kw['Body']
+    objects[kw['Key']] = body if isinstance(body, bytes) else body.read()
+    return {'ETag': '"e"'}
+cloud.get_object.side_effect = get_object
+cloud.put_object.side_effect = put_object
+catalog = cloud.Table.return_value
+item = {'work_id': stem, 'id_kind': 'stem', 'ingest_status': 'fulltext_ready',
+        'source_key': 'papers/%s/clean.md' % stem}
+catalog.get_item.return_value = {'Item': item}
+boto3.client = lambda *a, **k: cloud
+boto3.resource = lambda *a, **k: cloud
+extract_dir = Path(sys.argv[1]).parent / 'extracted'
+with zipfile.ZipFile(sys.argv[1]) as z:
+    z.extractall(extract_dir)
+sys.path.insert(0, str(extract_dir))
+from index import handler
+sections = ['## One-line Summary', '## 2. Key Contributions', '## 3. Methodology and Architecture',
+            '## 4. Key Results and Benchmarks', '## 5. Limitations and Future Work',
+            '## 6. Related Work', '## 7. Glossary']
+body = '\n\n'.join(s + '\n\n' + ('MeCP2 binding lowered cGAS signalling 2.1-fold. ' * 8) for s in sections)
+body = body.replace('## 7. Glossary', 'Sun and Barber first described cGAS.\n\n## 7. Glossary')
+assert handler({'action': 'publish_source_note', 'stem': stem, 'markdown': body,
+                'model_id': 'claude-opus-5-5', 'reasoning': 'high'}, None)['published']
+item.update(source_note_status='source_ready', source_note_key=key)
+sha = lambda: hashlib.sha256(objects[key]).hexdigest()
+first = sha()
+def revise(pairs, expected=None):
+    return handler({'action': 'revise_source_note', 'stem': stem, 'replacements': pairs,
+                    'model_id': 'claude-opus-5-5', 'reason': 'Related Work named authors the text does not',
+                    'expected_sha256': expected or sha()}, None)
+try:
+    revise([{'old': 'Sun and Barber first', 'new': 'Earlier work first'}], expected='0' * 64)
+    raise AssertionError('a note that moved since it was read must be refused')
+except ValueError as exc:
+    assert 'changed since it was read' in str(exc), exc
+many = revise([{'old': 'lowered cGAS signalling', 'new': 'raised it'}])
+assert many['status'] == 'refused' and 'not once' in many['problems'][0], many
+table = revise([{'old': '| Title | MeCP2 inhibits cGAS |', 'new': '| Title | Something else |'}])
+assert table['status'] == 'refused' and 'Document Information' in table['problems'][0], table
+heading = revise([{'old': '## 7. Glossary', 'new': '## 7. Terms'}])
+assert heading['status'] == 'refused' and 'headings' in heading['problems'][0], heading
+assert sha() == first, 'a refused revision writes nothing'
+done = revise([{'old': 'Sun and Barber first described cGAS.', 'new': 'The text does not name who first described cGAS.'}])
+assert done['status'] == 'revised' and done['revision'] == 1 and done['before_sha256'] == first, done
+page = objects[key].decode()
+assert 'Sun and Barber' not in page and 'does not name who first described' in page
+assert 'ingest_harness: "claude-code"' in page and 'ingest_model_id: "claude-opus-5-5"' in page
+assert 'revised_model_id: "claude-opus-5-5"' in page and 'revision_count: "1"' in page
+assert 'revision_reason: "Related Work named authors the text does not"' in page
+assert '| Title | MeCP2 inhibits cGAS |' in page
+expression = catalog.update_item.call_args.kwargs['UpdateExpression']
+assert 'list_append' in expression and 'source_note_sha256' in expression
+item['source_note_revision_count'] = 1
+again = revise([{'old': 'The text does not name', 'new': 'The extracted text does not name'}])
+assert again['revision'] == 2
+page = objects[key].decode()
+assert page.count('revised_model_id:') == 1 and 'revision_count: "2"' in page
+# A local note published before its reasoning level was recorded says `default`; that one line is
+# replaced as read, and a note already carrying a level is not overwritten (user, 2026-09-27).
+objects[key] = objects[key].replace(b'ingest_reasoning: "high"', b'ingest_reasoning: "default"')
+before = objects[key]
+level = lambda expected=None: handler({'action': 'set_local_note_reasoning', 'stem': stem, 'reasoning': 'high',
+                                       'expected_sha256': expected or sha()}, None)
+recorded = level()
+assert recorded['status'] == 'recorded' and recorded['reasoning'] == 'high', recorded
+assert objects[key] == before.replace(b'ingest_reasoning: "default"', b'ingest_reasoning: "high"')
+try:
+    level()
+    raise AssertionError('a note that records its level must not be overwritten')
+except ValueError as exc:
+    assert 'already records' in str(exc), exc
+print('ok')
+'''
+    env = {**os.environ, 'BUCKET_NAME': 'bucket', 'TABLE_NAME': 'table',
+           'OPENALEX_API_KEY_PARAMETER': 'parameter', 'AWS_DEFAULT_REGION': 'us-east-1'}
+    result = subprocess.run([sys.executable, '-c', code, str(package)], cwd=tmp_path,
+                            env=env, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+
+
+def test_zip_handler_rewrite_in_aws_names_its_own_writer(tmp_path):
+    """An AWS rewrite of a note a Claude Code session wrote and corrected used to keep that
+    session's frontmatter (user, 2026-09-25): the rewrite now names Bedrock, keeps the page's
+    first date, drops the correction fields and records itself in the revision history."""
+    source = Path(__file__).parents[1] / 'src'
+    package = tmp_path / 'ingest.zip'
+    with zipfile.ZipFile(package, 'w') as archive:
+        for path in list(source.rglob('*.py')) + list(source.rglob('*.json')):
+            archive.write(path, path.relative_to(source))
+    code = r'''
+import sys, io, json, zipfile
+from pathlib import Path
+import boto3
+from unittest.mock import MagicMock
+from botocore.exceptions import ClientError
+stem = 'chamma-2025-methyl-cpg-binding-protein-inhibits-cgas'
+key = 'wiki/sources/%s.md' % stem
+local = ('---\ntitle: "MeCP2 inhibits cGAS"\ncategory: "neuroimmune"\ningest_harness: "claude-code"\n'
+         'ingest_agent: "byeori-note-local"\ningest_model_id: "claude-opus-5-5"\ncreated: "2026-09-24"\n'
+         'revised_harness: "claude-code"\nrevised_model_id: "claude-opus-5-5"\nrevision_count: "1"\n'
+         'revision_reason: "Related Work named authors"\n---\n\n## One-line Summary\n\nOld text.\n')
+objects = {'papers/%s/clean.md' % stem: b'# Paper\n\nMeCP2 binds dsDNA.\n',
+           'papers/%s/meta.json' % stem: json.dumps({'stem': stem, 'title': 'MeCP2 inhibits cGAS',
+                                                     'authors': 'Chamma', 'year': '2025', 'doi': '10.1/mecp2',
+                                                     'category': 'neuroimmune'}).encode(),
+           key: local.encode()}
+cloud = MagicMock()
+def get_object(**kw):
+    if kw['Key'] not in objects:
+        raise ClientError({'Error': {'Code': 'NoSuchKey'}}, 'GetObject')
+    return {'Body': io.BytesIO(objects[kw['Key']]), 'ETag': '"e"'}
+def put_object(**kw):
+    body = kw['Body']
+    objects[kw['Key']] = body if isinstance(body, bytes) else body.read()
+    return {'ETag': '"e"'}
+cloud.get_object.side_effect = get_object
+cloud.put_object.side_effect = put_object
+catalog = cloud.Table.return_value
+catalog.get_item.return_value = {'Item': {'work_id': stem, 'id_kind': 'stem', 'ingest_status': 'fulltext_ready',
+                                          'source_key': 'papers/%s/clean.md' % stem,
+                                          'source_note_key': key, 'source_note_status': 'source_ready',
+                                          'source_note_written_by': 'claude-code'}}
+boto3.client = lambda *a, **k: cloud
+boto3.resource = lambda *a, **k: cloud
+extract_dir = Path(sys.argv[1]).parent / 'extracted'
+with zipfile.ZipFile(sys.argv[1]) as z:
+    z.extractall(extract_dir)
+sys.path.insert(0, str(extract_dir))
+import byeori.ingest_lambda as lam
+sections = ['## One-line Summary', '## 2. Key Contributions', '## 3. Methodology and Architecture',
+            '## 4. Key Results and Benchmarks', '## 5. Limitations and Future Work',
+            '## 6. Related Work', '## 7. Glossary']
+body = '\n\n'.join(s + '\n\n' + ('MeCP2 binding lowered cGAS signalling 2.1-fold. ' * 8) for s in sections)
+lam._generate = lambda *a, **k: {'text': body, 'problems': [], 'usage': {'inputTokens': 10, 'outputTokens': 5},
+                                 'seconds': 1.0, 'stop_reason': 'end_turn', 'generated_at': '2026-09-25T01:00:00+00:00'}
+result = lam.handler({'action': 'source_note', 'stem': stem, 'model_id': 'global.anthropic.claude-opus-5'}, None)
+assert result['status'] == 'source_ready', result
+page = objects[key].decode()
+front = page.split('\n---\n', 1)[0]
+assert 'ingest_harness: "aws-bedrock"' in front and 'claude-code' not in front, front
+assert 'ingest_model_id: "global.anthropic.claude-opus-5"' in front
+assert 'created: "2026-09-24"' in front, 'the page keeps its first date'
+assert 'revised_' not in front and 'revision_' not in front
+assert 'Old text.' not in page
+call = catalog.update_item.call_args.kwargs
+assert ':by' in call['ExpressionAttributeValues'] and call['ExpressionAttributeValues'][':by'] == 'aws-bedrock'
+rewrite = call['ExpressionAttributeValues'][':rewrite'][0]
+assert rewrite['kind'] == 'rewrite' and rewrite['after_sha256'] != rewrite['before_sha256']
+assert 'REMOVE' in call['UpdateExpression'] and 'source_note_revision_count' in call['UpdateExpression']
+print('ok')
+'''
+    env = {**os.environ, 'BUCKET_NAME': 'bucket', 'TABLE_NAME': 'table',
+           'OPENALEX_API_KEY_PARAMETER': 'parameter', 'AWS_DEFAULT_REGION': 'us-east-1'}
+    result = subprocess.run([sys.executable, '-c', code, str(package)], cwd=tmp_path,
+                            env=env, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+
+
+def test_zip_handler_supersedes_a_preprint_note_and_repoints_what_cited_it(tmp_path):
+    """Sixteen papers held two notes, most a bioRxiv preprint beside the published paper, and the
+    user decided the preprint goes (2026-09-25). The pages that cited the preprint must end up citing
+    the published note, the preprint's note must leave wiki/sources/ with a copy kept, and its row
+    must be retired - in that order, so a page that moved in between keeps the note in place."""
+    source = Path(__file__).parents[1] / 'src'
+    package = tmp_path / 'ingest.zip'
+    with zipfile.ZipFile(package, 'w') as archive:
+        for path in list(source.rglob('*.py')) + list(source.rglob('*.json')):
+            archive.write(path, path.relative_to(source))
+    code = r'''
+import sys, io, json, sqlite3, hashlib, zipfile
+from pathlib import Path
+import boto3
+from unittest.mock import MagicMock
+from botocore.exceptions import ClientError
+DROP, KEEP = 'wamsley-2023-molecular-cascades', 'wamsley-2024-molecular-cascades'
+keep_note = '---\ntitle: "Molecular cascades"\n---\n\n## One-line Summary\nPublished.\n'
+drop_note = '---\ntitle: "Molecular cascades"\n---\n\n## One-line Summary\nPreprint.\n'
+page_a = ('---\nkind: "subtopic"\nnote_count: 2\nsource_notes: [{"stem": "' + DROP + '", "sha256": "old"}, '
+          '{"stem": "other-2020-x", "sha256": "o"}]\n---\n\n## Findings\n- Shown in [[sources/' + DROP + ']] '
+          'and [[sources/' + DROP + '|the preprint]].\n')
+page_b = ('---\nkind: "subtopic"\nnote_count: 2\nsource_notes: [{"stem": "' + DROP + '", "sha256": "old"}, '
+          '{"stem": "' + KEEP + '", "sha256": "k"}]\n---\n\n## Findings\n- [[sources/' + DROP + ']] and '
+          '[[sources/' + KEEP + ']].\n')
+objects = {f'wiki/sources/{DROP}.md': drop_note.encode(), f'wiki/sources/{KEEP}.md': keep_note.encode(),
+           'wiki/overviews/cat/a.md': page_a.encode(), 'wiki/overviews/cat/b.md': page_b.encode()}
+etags = {k: '"%d"' % i for i, k in enumerate(objects)}
+deleted = []
+cloud = MagicMock()
+def get_object(**kw):
+    if kw['Key'] not in objects:
+        raise ClientError({'Error': {'Code': 'NoSuchKey'}}, 'GetObject')
+    return {'Body': io.BytesIO(objects[kw['Key']]), 'ETag': etags[kw['Key']]}
+def put_object(**kw):
+    if kw.get('IfMatch') and kw['IfMatch'] != etags.get(kw['Key']):
+        raise ClientError({'Error': {'Code': 'PreconditionFailed'}}, 'PutObject')
+    body = kw['Body']
+    objects[kw['Key']] = body if isinstance(body, bytes) else body.read()
+    etags[kw['Key']] = '"w%d"' % len(objects)
+def delete_object(**kw):
+    deleted.append(kw['Key']); objects.pop(kw['Key'], None)
+cloud.get_object.side_effect = get_object
+cloud.put_object.side_effect = put_object
+cloud.delete_object.side_effect = delete_object
+items = {DROP: {'work_id': DROP, 'doi': '10.1101/2023.03.10.530869', 'source_note_status': 'source_ready'},
+         KEEP: {'work_id': KEEP, 'source_note_status': 'source_ready'}}
+updates = []
+table = cloud.Table.return_value
+table.get_item.side_effect = lambda Key: {'Item': dict(items[Key['work_id']])}
+table.update_item.side_effect = lambda **kw: updates.append(kw)
+boto3.client = lambda *a, **k: cloud
+boto3.resource = lambda *a, **k: cloud
+extract_dir = Path(sys.argv[1]).parent / 'extracted'
+with zipfile.ZipFile(sys.argv[1]) as z:
+    z.extractall(extract_dir)
+sys.path.insert(0, str(extract_dir))
+from index import handler
+import byeori.ingest_lambda as ingest
+con = sqlite3.connect(':memory:')
+con.execute("CREATE TABLE docs (doc_type TEXT, doc_id TEXT, title TEXT, path TEXT)")
+con.execute("CREATE TABLE links (from_type TEXT, from_id TEXT, to_type TEXT, to_id TEXT)")
+for doc_id in ('cat/a', 'cat/b'):
+    con.execute("INSERT INTO docs VALUES ('overview', ?, '', ?)", (doc_id, f's3://bucket/wiki/overviews/{doc_id}.md'))
+    con.execute("INSERT INTO links VALUES ('overview', ?, 'note', ?)", (doc_id, DROP))
+raw = con.serialize(); con.close()
+def fresh_index():
+    fresh = sqlite3.connect(':memory:'); fresh.deserialize(raw); return fresh, 'etag'
+ingest._wiki_index = fresh_index
+
+dry = handler({'action': 'supersede_note', 'drop': DROP, 'keep': KEEP}, None)
+assert dry['state'] == 'would_supersede' and dry['citing_pages'] == 2, dry
+assert deleted == [] and updates == []
+
+done = handler({'action': 'supersede_note', 'drop': DROP, 'keep': KEEP, 'apply': True}, None)
+assert done['state'] == 'superseded', done
+keep_sha = hashlib.sha256(keep_note.encode()).hexdigest()
+a = objects['wiki/overviews/cat/a.md'].decode()
+assert '[[sources/' + DROP not in a and a.count('[[sources/' + KEEP) == 2 and '|the preprint]]' in a
+assert '{"stem": "' + KEEP + '", "sha256": "' + keep_sha + '"}' in a and 'note_count: 2' in a
+b = objects['wiki/overviews/cat/b.md'].decode()
+assert '"stem": "' + DROP + '"' not in b and b.count('"stem": "' + KEEP + '"') == 1 and 'note_count: 1' in b
+assert objects[f'runs/superseded-notes/{DROP}.md'] == drop_note.encode()
+assert deleted == [f'wiki/sources/{DROP}.md'] and f'wiki/sources/{KEEP}.md' in objects
+retired = [u for u in updates if u['Key'] == {'work_id': DROP}][0]
+assert retired['ExpressionAttributeValues'][':keep'] == KEEP
+assert retired['ExpressionAttributeValues'][':sentinel'] == f'superseded:{DROP}'
+took = [u for u in updates if u['Key'] == {'work_id': KEEP}][0]
+assert took['ExpressionAttributeValues'][':doi'] == '10.1101/2023.03.10.530869'
+again = handler({'action': 'supersede_note', 'drop': DROP, 'keep': KEEP, 'apply': True}, None)
+assert again['state'] == 'already_gone'
+
+# a citing page the index names but that cannot be read keeps the note in place
+objects[f'wiki/sources/{DROP}.md'] = drop_note.encode(); etags[f'wiki/sources/{DROP}.md'] = '"back"'
+objects.pop('wiki/overviews/cat/a.md')
+deleted.clear()
+held = handler({'action': 'supersede_note', 'drop': DROP, 'keep': KEEP, 'apply': True}, None)
+assert held['state'] == 'a_citing_page_unresolved_note_kept', held
+assert deleted == [] and f'wiki/sources/{DROP}.md' in objects
 print('ok')
 '''
     env = {**os.environ, 'BUCKET_NAME': 'bucket', 'TABLE_NAME': 'table',

@@ -323,10 +323,21 @@ class AwsStore:
         return self._invoke({"action": "read_extraction", "stem": stem, "start": start,
                              "max_chars": max_chars})
 
-    def publish_source_note(self, stem: str, markdown: str, *, model_id: str) -> dict[str, Any]:
+    def publish_source_note(self, stem: str, markdown: str, *, model_id: str, reasoning: str) -> dict[str, Any]:
         """Publish a note written outside AWS; the frontmatter and connections are built there."""
         return self._invoke({"action": "publish_source_note", "stem": stem, "markdown": markdown,
-                             "model_id": model_id})
+                             "model_id": model_id, "reasoning": reasoning})
+
+    def set_local_note_reasoning(self, stem: str, *, reasoning: str, expected_sha256: str) -> dict[str, Any]:
+        """Record the reasoning level on a local note published while it was written as `default`."""
+        return self._invoke({"action": "set_local_note_reasoning", "stem": stem, "reasoning": reasoning,
+                             "expected_sha256": expected_sha256})
+
+    def revise_source_note(self, stem: str, replacements: list[dict[str, str]], *, model_id: str,
+                           reason: str, expected_sha256: str) -> dict[str, Any]:
+        """Correct a published note in AWS from exact replacements; the note must be as read."""
+        return self._invoke({"action": "revise_source_note", "stem": stem, "replacements": replacements,
+                             "model_id": model_id, "reason": reason, "expected_sha256": expected_sha256})
 
     def build_category_catalogs(self, *, min_notes: int = 1) -> dict[str, Any]:
         """One browse catalog per field, and the root table of fields, written in AWS."""
@@ -358,6 +369,12 @@ class AwsStore:
     def sync_note_categories(self, *, apply: bool = False) -> dict[str, Any]:
         """Make the catalogue agree with the notes about which field each one is in."""
         return self._invoke({"action": "sync_note_categories", "apply": apply})
+
+    def supersede_note(self, drop: str, keep: str, *, apply: bool = False,
+                       why: str | None = None) -> dict[str, Any]:
+        """Take ``drop``'s note out of the wiki and point what cited it at ``keep``'s note."""
+        return self._invoke({"action": "supersede_note", "drop": drop, "keep": keep, "apply": apply,
+                             **({"why": why} if why else {})})
 
     def wiki_read(self, doc_type: str, doc_id: str, *, section: str | None = None,
                   start: int = 0, max_chars: int = 4000) -> dict[str, Any]:

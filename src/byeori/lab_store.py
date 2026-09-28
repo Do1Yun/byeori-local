@@ -1,4 +1,4 @@
-"""Control records and receipts for the student question workflow (docs/LAB-QUESTION-WORKFLOW.md).
+"""Control records and receipts for the student question workflow (docs/LAB-SERVICE.md).
 
 This is the only module that knows DynamoDB expressions. Every other lab module talks to a
 ``TablePort``: get, create-only put, revision-checked update, revision-checked delete, prefix

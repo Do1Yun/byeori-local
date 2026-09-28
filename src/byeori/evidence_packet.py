@@ -1,4 +1,4 @@
-"""Bounded evidence packets over the shared BM25 index (docs/LAB-QUESTION-WORKFLOW.md section 5).
+"""Bounded evidence packets over the shared BM25 index (docs/LAB-SERVICE.md section 5).
 
 The student answer worker must not read whole pages or the top heading alone. This module opens
 the AWS index read-only, ranks candidates with the campaign's ``wiki_search.search_index``, reads

@@ -1,4 +1,4 @@
-"""Answer-only worker for student questions (docs/LAB-QUESTION-WORKFLOW.md, P2).
+"""Answer-only worker for student questions (docs/LAB-SERVICE.md, P2).
 
 The worker takes a job that ``lab_jobs.claim`` already moved to ``running`` and answers it from
 a bounded evidence packet: ``evidence_packet.build_packet`` searches the shared index, reads the
@@ -158,7 +158,7 @@ Headings and bullets are what make a short answer usable, so use them. The lengt
 
 You have two tools and both only return structured data to the server. No tool writes, edits or publishes anything, and nothing you say changes the wiki. Call submit_answer when you can answer. Call request_lookup once, and only when a decisive section is missing or cut, to run one supplemental BM25 search with a complete English query, to read specific wiki keys in packet form, and to open the papers themselves with read_originals; you will then be asked to submit_answer with whatever was found. There is no second lookup, so ask for everything you need in that one call. Use read_originals whenever the question asks for exact values, or a note says a value it reports sits only in a figure, a table or a supplement, or you would otherwise have to write that the paper itself was not consulted: a note is a summary, so exact values often exist only in the paper. A document with `has_original: true` in the evidence has its text stored and can be opened; one with false cannot. There is one lookup, so put read_originals and any search in the same call rather than choosing between them; a search you run instead of opening a paper cannot be undone. When the question asks for values as reported in the papers, read_originals is required, not optional. Name the wiki/sources keys already in the packet, at most a few. A section name is optional and must be a heading of the paper itself (Methods, Results, Discussion), never a note heading such as "4. Key Results and Benchmarks"; leave it out when unsure and the paper's own headings come back with its opening text. The reply adds each paper's stored text under `originals`, with its figure and table captions and the sentences that mention them under `assets` where the lab has them. Cite the source note key as usual and say in the answer that the value came from the paper's own text.
 
-A document with `has_supplementary: true` has its supplementary tables stored, and its note's Supplementary Files section says which file holds what. When the value the question turns on is one gene's statistics in a table, a cohort's or sample's fields, or a reagent, ask for it in the same lookup with read_supplementary: name the note key, the file from that section, and in `find` the exact text of the row you need (a gene symbol, a sample ID, a term); leave out the file to search all of that paper's tables for `find`, or leave out both to get the file guide. The reply adds the header rows and the matching rows with their row numbers under `supplementary`, and `hit_columns` says in which column of each row the text was found; a sheet that sets several tables side by side puts other genes in the same row, so read the columns next to the hit. Report such values as read from the named supplementary file, citing the source note key, and say when a read was incomplete or found no match.
+A document with `has_supplementary: true` has its supplementary tables stored, and its note's Supplementary Files section says which file holds what. When the value the question turns on is one gene's statistics in a table, a cohort's or sample's fields, or a reagent, ask for it in the same lookup with read_supplementary: name the note key, the file from that section, and in `find` the exact text of the row you need (a gene symbol, a sample ID, a term); leave out the file to search all of that paper's tables for `find`, or leave out both to get the file guide. The reply adds the header rows and the matching rows with their row numbers under `supplementary`, and `hit_columns` says in which column of each row the text was found; a sheet that sets several tables side by side puts other genes in the same row, so read the columns next to the hit. Report such values as read from the named supplementary file, citing the source note key, and say when a read was incomplete or found no match. A file the section places in a folder outside Byeori (the one it names) is not stored here and cannot be read: say that the value sits in that file and where the section says the file is, and report no value for it.
 """
 
 RETRY_SYSTEM = f"""Your previous submit_answer call ran past the output limit and was cut off, so the server received no answer at all and the member is still waiting.
@@ -901,6 +901,11 @@ def _publish_page(run: _Run, record: Mapping[str, Any]) -> None:
     index is reachable from here.
     """
     if run.pages is None:
+        return
+    if run.job.get("private_material") is not False:
+        # A question marked private carries unpublished work, and every student can read
+        # ``wiki/lab-questions/`` through a note's hub; its answer stays in the receipt only
+        # (user, 2026-09-26). A job without the flag is treated as private.
         return
     period = run.job.get("period") or period_for(run.now())
     try:

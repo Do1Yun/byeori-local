@@ -1,4 +1,4 @@
-"""Job records for the student question workflow (docs/LAB-QUESTION-WORKFLOW.md, P1).
+"""Job records for the student question workflow (docs/LAB-SERVICE.md, P1).
 
 A question becomes a job in two deliberately separate steps. ``intake`` records the request
 idempotently under the caller's verified identity, then ``queue`` moves it onto the paid path in
@@ -698,7 +698,7 @@ def _execution_key(parent_job_id: str) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------------------------
-# Lease recovery (administrator reconciliation; docs/LAB-QUESTION-WORKFLOW.md section 8)
+# Lease recovery (administrator reconciliation; docs/LAB-SERVICE.md section 8)
 # ---------------------------------------------------------------------------------------------
 
 def expired_leases(table: TablePort, now: datetime | None = None, limit: int = 100) -> list[dict[str, Any]]:

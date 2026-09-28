@@ -21,16 +21,21 @@ skipped rather than overwritten.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from typing import Any
 
 from botocore.exceptions import ClientError
 
-from byeori.lab_pages import ANSWER_PAGE_PREFIX, page_link_line
+from byeori.lab_pages import ANSWER_PAGE_PREFIX, legacy_link_line, page_link_line
 
-__all__ = ["HEADING", "INDEXED_FOLDERS", "add_line", "iter_pages", "link_pages", "needs_line"]
+__all__ = ["HEADING", "INDEXED_FOLDERS", "LEGACY_HEADING", "add_line", "iter_pages", "link_pages", "needs_line"]
 
-HEADING = "## 랩 질문"
+HEADING = "## Questions Citing This Page"
+# The Korean heading pages carried until 2026-09-26; the wiki is written in English, and the
+# questions come from every member, not only students (user, 2026-09-26). A run replaces it.
+LEGACY_HEADING = "## 랩 질문"
+_LEGACY_HEADING_LINE = re.compile(r"^## (?:랩 질문|Related Questions)[ \t]*$", re.M)
 # The layers the index reads. ``wiki/lab-questions/`` is not one of them and is never edited here.
 INDEXED_FOLDERS = ("wiki/sources/", "wiki/concepts/", "wiki/overviews/", "wiki/questions/")
 CONFLICT = frozenset({"PreconditionFailed", "ConditionalRequestConflict"})
@@ -48,13 +53,22 @@ def iter_pages(s3: Any, bucket: str, folders: tuple[str, ...] = INDEXED_FOLDERS)
 
 
 def needs_line(text: str, link: str) -> bool:
-    """False when this page already carries its line, so a re-run is a no-op."""
-    return page_link_line(link) not in text
+    """False when this page already carries its line and no Korean one, so a re-run is a no-op."""
+    return page_link_line(link) not in text or _legacy(text, link)
+
+
+def _legacy(text: str, link: str) -> bool:
+    return legacy_link_line(link) in text or bool(_LEGACY_HEADING_LINE.search(text))
 
 
 def add_line(text: str, link: str) -> str:
-    """The page with its standing line appended under ``HEADING``; existing content is untouched."""
-    body = text.rstrip("\n")
+    """The page with its standing line appended under ``HEADING``; existing content is untouched.
+
+    A page that carries the Korean heading and line gets both replaced in place, not a second section.
+    """
+    body = _LEGACY_HEADING_LINE.sub(HEADING, text.replace(legacy_link_line(link), page_link_line(link))).rstrip("\n")
+    if page_link_line(link) in body:
+        return body + "\n"
     if HEADING in body:
         # The section exists from an earlier run with a different link; add this one inside it.
         head, _, tail = body.rpartition(HEADING)

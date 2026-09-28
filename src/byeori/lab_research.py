@@ -1,4 +1,4 @@
-"""Approved research worker for the student question workflow (docs/LAB-QUESTION-WORKFLOW.md section 7, P4).
+"""Approved research worker for the student question workflow (docs/LAB-SERVICE.md section 7, P4).
 
 A research job exists only because a student accepted a synthesis offer or a professor approved a
 candidate (``lab_offers``, ``lab_review``); both paths bind the job to one ``APPROVAL`` record.

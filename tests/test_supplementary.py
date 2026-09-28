@@ -14,7 +14,7 @@ from lab_fakes import MemoryS3
 STEM = "doe-2024-a-paper"
 DOI = "10.1038/s41586-024-00001-2"
 NOTE = '---\ntitle: "A note"\n---\n\n## Results\n\nx\n'
-NOTE_WITH_LAB = NOTE + f"\n{LAB_HEADING}\n\n- 이 페이지를 근거로 답한 랩 질문: [[lab-questions/by-page/sources/{STEM}]]\n"
+NOTE_WITH_LAB = NOTE + f"\n{LAB_HEADING}\n\n- [[lab-questions/by-page/sources/{STEM}|Answered questions that cited this page]]\n"
 SECTION = (f"{supp.NOTE_HEADING}\n\n- Supplementary Data 1 (`t1.xlsx`): DEGs per cell type, HGNC symbols, FDR\n"
            f"- File guide: {supp.guide_key(STEM)}\n")
 GUIDE = f"# Supplementary files\n\nEvidence note: [[sources/{STEM}]]\n"
@@ -60,13 +60,20 @@ def folder(tmp_path, files: dict[str, bytes]):
     return tmp_path
 
 
-def triage(identity="confirmed", **files):
+FOLDER = f"Projects/Resources/{STEM}/"
+
+
+def triage(identity="confirmed", resources_folder=None, **files):
     entries = []
     for name, (data, decision) in files.items():
+        scientific = decision in ("upload", "resource")
         entries.append({"file": name.replace("__", "/"), "sha256": sha(data), "bytes": len(data),
-                        "kind": "data_table" if decision == "upload" else "reporting_summary",
-                        "decision": decision, "reason": "r", "uses": ["gene_sets"] if decision == "upload" else []})
-    return {"stem": STEM, "doi": DOI, "identity": identity, "files": entries}
+                        "kind": "data_table" if scientific else "reporting_summary",
+                        "decision": decision, "reason": "r", "uses": ["gene_sets"] if scientific else []})
+    record = {"stem": STEM, "doi": DOI, "identity": identity, "files": entries}
+    if resources_folder:
+        record["resources_folder"] = resources_folder
+    return record
 
 
 def bucket_with_paper(**extra) -> MetaS3:
@@ -134,6 +141,44 @@ def test_kept_files_guide_and_manifest_are_stored_and_skipped_files_only_recorde
     assert s3.objects[supp.guide_key(STEM)].decode() == GUIDE
     # the original, its extraction and its metadata are untouched
     assert {key for key, _ in s3.writes} <= {k for k in s3.objects if k.startswith(base)}
+
+
+def test_resource_files_are_hashed_and_described_but_never_stored(tmp_path):
+    root = folder(tmp_path, {"t1.xlsx": b"table", "big.xlsx": b"x" * 40, "rs.pdf": b"form"})
+    s3 = bucket_with_paper()
+    record = triage(resources_folder=FOLDER, **{"t1.xlsx": (b"table", "upload"), "big.xlsx": (b"x" * 40, "resource"),
+                                                "rs.pdf": (b"form", "skip")})
+
+    report = publish(s3, root, record)
+
+    assert report["outcome"] == "published" and report["stored"] == 1 and report["resource_files"] == 1
+    assert supp.prefix(STEM) + "big.xlsx" not in s3.objects
+    manifest = json.loads(s3.objects[supp.manifest_key(STEM)])
+    assert (manifest["files_kept"], manifest["files_resource"], manifest["files_not_kept"]) == (1, 1, 1)
+    assert manifest["resources_folder"] == FOLDER
+    big = next(f for f in manifest["files"] if f["file"] == "big.xlsx")
+    assert big["decision"] == "resource" and big["sha256"] == sha(b"x" * 40) and "key" not in big
+
+
+def test_a_paper_kept_only_in_the_resources_folder_still_gets_its_guide_and_manifest(tmp_path):
+    root = folder(tmp_path, {"big.xlsx": b"x" * 40})
+    s3 = bucket_with_paper()
+
+    report = publish(s3, root, triage(resources_folder=FOLDER, **{"big.xlsx": (b"x" * 40, "resource")}))
+
+    assert report["outcome"] == "published" and report["files"] == 0 and report["stored"] == 0
+    assert {key for key, _ in s3.writes} == {supp.guide_key(STEM), supp.manifest_key(STEM)}
+
+
+def test_a_resource_file_needs_the_folder_named_and_the_bytes_it_was_read_as(tmp_path):
+    root = folder(tmp_path, {"big.xlsx": b"x" * 40})
+
+    unnamed = publish(bucket_with_paper(), root, triage(**{"big.xlsx": (b"x" * 40, "resource")}))
+    changed = publish(bucket_with_paper(), root,
+                      triage(resources_folder=FOLDER, **{"big.xlsx": (b"y" * 40, "resource")}))
+
+    assert unnamed["outcome"] == "resources_folder_missing"
+    assert changed["outcome"] == "changed_since_read" and changed["file"] == "big.xlsx"
 
 
 def test_a_rerun_counts_stored_files_and_never_rewrites_them(tmp_path):
@@ -214,7 +259,7 @@ def test_the_lab_question_section_stays_last():
     out = supp.insert_section(NOTE_WITH_LAB, SECTION)
 
     assert out.index(supp.NOTE_HEADING) < out.index(LAB_HEADING)
-    assert out.rstrip("\n").endswith(f"[[lab-questions/by-page/sources/{STEM}]]")
+    assert out.rstrip("\n").endswith(f"[[lab-questions/by-page/sources/{STEM}|Answered questions that cited this page]]")
     assert out.replace(SECTION.strip() + "\n\n", "") == NOTE_WITH_LAB
 
 

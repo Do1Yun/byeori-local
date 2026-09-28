@@ -145,14 +145,15 @@ def _with_backlinks(text, key, entries):
     return cleaned.rstrip() + "\n\n" + block + "\n"
 
 
-def _scientific_text(incoming, current, key):
+def _scientific_text(incoming, current, key, keep_frontmatter=True):
     entries = _entries(incoming, BACKLINK_BLOCK)
     if current:
         # The current document owns its metadata and incoming links, even when a
-        # model returns only its rewritten scientific body.
+        # model returns only its rewritten scientific body. A caller that built the
+        # frontmatter from the current one on purpose (a recorded revision) says so.
         entries.update(_entries(current.text, BACKLINK_BLOCK))
         old_front, _ = _frontmatter(current.text)
-        if old_front:
+        if old_front and keep_frontmatter:
             new_front, new_body = _frontmatter(incoming)
             if key.startswith("wiki/questions/") and new_front:
                 # A regenerated answer owns fresh model/run metadata; only its
@@ -301,12 +302,15 @@ def _catalogs(s3, bucket, additions, *, check_remaining=None):
     return {"pages": results, "errors": errors}
 
 
-def publish_page(s3, bucket, key, text, *, expected_etag=None, create_only=False, check_remaining=None):
+def publish_page(s3, bucket, key, text, *, expected_etag=None, create_only=False, check_remaining=None,
+                 keep_frontmatter=True):
     """Publish one body, then merge reciprocal links and catalog entries in AWS.
 
     Existing bodies require the ETag from the caller's read. A conflict is never
     retried with a newer scientific body. Secondary failures are returned after
     the primary save, so the caller can report and repair incomplete connections.
+    A replaced page keeps its current frontmatter unless ``keep_frontmatter`` is
+    false, which only a caller that derived the new frontmatter from it may pass.
     """
     _page_key(key)
     if not isinstance(text, str) or not text.strip():
@@ -319,7 +323,7 @@ def publish_page(s3, bucket, key, text, *, expected_etag=None, create_only=False
         raise PageConflictError(f"Read the current version before replacing {key}")
     if not current and expected_etag is not None:
         raise PageConflictError(f"The version read for {key} no longer exists")
-    rendered = _scientific_text(text, current, key)
+    rendered = _scientific_text(text, current, key, keep_frontmatter)
     try:
         response = _put(s3, bucket, key, rendered, current)
     except ClientError as exc:

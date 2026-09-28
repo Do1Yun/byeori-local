@@ -138,8 +138,8 @@ because a paper's two pages competed for the same result slots.
 
 What it costs, measured by one lab at Bedrock list prices (details in `docs/COST.md`):
 
-- **Per paper:** about $0.30 for the note on Claude Opus 5 at the shipped settings (`IngestReasoning=high`),
-  or about $0.135 at `default` reasoning ($0.055 on Sonnet 5), plus about $0.02 for extraction and lookups.
+- **Per paper:** about $0.24 for the note on Claude Opus 5.5 at the shipped settings (median of 52 notes;
+  Opus 5, the fallback, wrote 12,807 at a median of $0.375), plus about $0.02 for extraction and lookups.
 - **Per question:** about $2.21 for a research question (median of six), about $0.25 for a student answer.
 - **Idle month:** S3 storage by size (about $0.023 per GB-month), $1 per KMS key if you install the optional
   student service or Jev triage, everything else near zero.

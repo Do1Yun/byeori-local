@@ -16,7 +16,8 @@ You need:
   `aws sts get-caller-identity --profile byeori`; it prints the account and the user.
 - **A region** where Bedrock offers the Claude models, for example `us-east-1`.
 - **Bedrock model access.** In the AWS console, switch to your region, open Bedrock → Model access,
-  and request access to the Claude models (Byeori's default is Claude Opus 5). Approval is usually
+  and request access to the Claude models: Byeori writes notes and synthesis with Claude Opus 5.5
+  and falls back to Claude Opus 5, so request both. Approval is usually
   immediate. Without it every note fails; step 5 checks it.
 - **Docker**, running. `docker --version` should answer.
 - **`uv`** (`uv --version`) and **the AWS CLI** (`aws --version`).
@@ -115,7 +116,8 @@ while idle. With `false` it uses the VPC and subnets you named.
 
 Other settings can be changed by naming them after the command, as `Key=Value`. The ones you are
 most likely to want are the models (`DraftModelId`, `NoteModelId`, `NoteFallbackModelId`,
-`SynthesisModelId`, `SynthesisFallbackModelId`; all default to `global.anthropic.claude-opus-5`),
+`SynthesisModelId`, `SynthesisFallbackModelId`; `byeori deploy` sets the note and synthesis models
+to `global.anthropic.claude-opus-5-5` and the other three to `global.anthropic.claude-opus-5`),
 the thinking effort (`IngestReasoning`, `SynthesisReasoning`), the spending cap per research
 question (`QuestionBudgetUsd`, 12 dollars as deployed) and the nightly index rebuild
 (`IndexRebuildSchedule`, a cron expression in UTC; empty turns it off). For example:

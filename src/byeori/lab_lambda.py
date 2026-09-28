@@ -1,4 +1,4 @@
-"""Composition root of the ``byeori-lab`` stack (docs/LAB-QUESTION-WORKFLOW.md, section 3).
+"""Composition root of the ``byeori-lab`` stack (docs/LAB-SERVICE.md, section 3).
 
 Every function of the stack runs ``handler`` and takes its role from ``LAB_HANDLER``: the
 authenticated ``gateway`` behind the Function URL, the SQS-driven ``answer`` and ``triage``

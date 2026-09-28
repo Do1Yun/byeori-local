@@ -1,4 +1,4 @@
-"""Authenticated Function URL gateway for the student question workflow (docs/LAB-QUESTION-WORKFLOW.md, sections 3-4).
+"""Authenticated Function URL gateway for the student question workflow (docs/LAB-SERVICE.md, sections 3-4).
 
 One POST carries one action. The gateway parses the payload-format-2.0 event, matches the
 caller's IAM identity against the member registry, checks the action's role rule and hands the

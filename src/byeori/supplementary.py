@@ -26,9 +26,16 @@ may be replaced by a later run.
 ``probable`` (only the folder name linked them) is published only when the DOI in the lab's own
 manifest equals the DOI Byeori stores for the paper. Anything else is reported and not published.
 
-**The note is edited once.** The section goes in before ``## 랩 질문`` when that section exists,
+**The note is edited once.** The section goes in before ``## Questions Citing This Page`` (or the older ``## 랩 질문``) when that section exists,
 because the lab-question linker appends inside the last section of the page; it is written back
 with the ETag of the read, and a note that already has the heading is left alone.
+
+**Since 2026-09-27 a file may be kept only in the lab's Resources folder.** The user decided that a
+paper's supplementary files live in the lab's shared folder ``Projects/Resources/{stem}/`` and that Byeori
+stores beside the note only the row-lookup tables of 10 MB or less. A reading marks the other
+scientific files ``decision: resource``; they are hashed and recorded in the manifest with
+``resources_folder`` but never put, so the intake clean-up can still settle the directory and the
+guide still says what each file is and where. The reasons are in ``docs/records/research-assets-design.md``.
 """
 from __future__ import annotations
 
@@ -43,6 +50,7 @@ from typing import Any
 from botocore.exceptions import ClientError
 
 from byeori.wiki_question_links import HEADING as LAB_HEADING
+from byeori.wiki_question_links import LEGACY_HEADING as LEGACY_LAB_HEADING
 
 __all__ = [
     "NOTE_HEADING", "NOTE_LIMIT", "build_manifest", "check_identity", "check_note_section", "guide_key",
@@ -113,9 +121,10 @@ def insert_section(text: str, section: str) -> str:
         return text
     block = section.strip()
     body = text.rstrip("\n")
-    if LAB_HEADING in body:
-        head, _, tail = body.rpartition(LAB_HEADING)
-        return f"{head.rstrip()}\n\n{block}\n\n{LAB_HEADING}{tail}\n"
+    for heading in (LAB_HEADING, LEGACY_LAB_HEADING):
+        if heading in body:
+            head, _, tail = body.rpartition(heading)
+            return f"{head.rstrip()}\n\n{block}\n\n{heading}{tail}\n"
     return f"{body}\n\n{block}\n"
 
 
@@ -152,8 +161,10 @@ def build_manifest(stem: str, triage: dict[str, Any], *, doi: str, identity_basi
         "identity_basis": identity_basis,
         "source_note": f"wiki/sources/{stem}.md",
         "guide": guide_key(stem),
+        "resources_folder": triage.get("resources_folder"),
         "files_kept": sum(1 for f in files if f.get("decision") == "upload"),
-        "files_not_kept": sum(1 for f in files if f.get("decision") != "upload"),
+        "files_resource": sum(1 for f in files if f.get("decision") == "resource"),
+        "files_not_kept": sum(1 for f in files if f.get("decision") not in ("upload", "resource")),
         "missing_publisher_files": triage.get("missing_publisher_files"),
         "read_by": "claude-code local agent",
         "note_section": note_section.strip() + "\n",
@@ -179,10 +190,16 @@ def _stored_sha(s3: Any, bucket: str, key: str) -> str | None:
 def publish_paper(s3: Any, bucket: str, stem: str, *, triage: dict[str, Any], guide: str, note_section: str,
                   files_root: Path, lab_manifest_doi: str | None, apply: bool,
                   hasher: Callable[[Path], str] = sha256_file) -> dict[str, Any]:
-    """Put one paper's kept files, guide and manifest. Without ``apply`` it only reads and reports."""
+    """Put one paper's kept files, guide and manifest. Without ``apply`` it only reads and reports.
+
+    A paper whose files are all ``resource`` still gets its guide and manifest, with nothing put.
+    """
     kept = [entry for entry in triage.get("files", []) if entry.get("decision") == "upload"]
-    if not kept:
+    resource = [entry for entry in triage.get("files", []) if entry.get("decision") == "resource"]
+    if not kept and not resource:
         return {"stem": stem, "outcome": "nothing_to_keep"}
+    if resource and not triage.get("resources_folder"):
+        return {"stem": stem, "outcome": "resources_folder_missing"}
     try:
         meta = json.loads(s3.get_object(Bucket=bucket, Key=f"papers/{stem}/meta.json")["Body"].read())
     except ClientError:
@@ -196,15 +213,18 @@ def publish_paper(s3: Any, bucket: str, stem: str, *, triage: dict[str, Any], gu
         return {"stem": stem, "outcome": "note_section_invalid", "problems": problems}
 
     planned = []
-    for entry in kept:
+    for entry in kept + resource:
+        # A resource file is checked too: the manifest's hash is what lets the intake clean-up
+        # settle the directory, so it must describe the bytes actually there.
         path = files_root / entry["file"]
         if not path.is_file() or path.stat().st_size != entry.get("bytes") or hasher(path) != entry.get("sha256"):
             return {"stem": stem, "outcome": "changed_since_read", "file": entry["file"]}
-        planned.append((entry, path, member_key(stem, entry["file"])))
+        if entry in kept:
+            planned.append((entry, path, member_key(stem, entry["file"])))
 
     report: dict[str, Any] = {"stem": stem, "identity": basis, "files": len(planned),
                               "bytes": sum(entry["bytes"] for entry, _, _ in planned),
-                              "stored": 0, "already": 0, "conflicts": []}
+                              "resource_files": len(resource), "stored": 0, "already": 0, "conflicts": []}
     if not apply:
         report["outcome"] = "would_publish"
         return report

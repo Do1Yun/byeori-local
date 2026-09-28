@@ -1,4 +1,4 @@
-"""Policy constants of the student question workflow (docs/LAB-QUESTION-WORKFLOW.md)."""
+"""Policy constants of the student question workflow (docs/LAB-SERVICE.md)."""
 import math
 
 from byeori import lab_policy

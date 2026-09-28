@@ -417,7 +417,11 @@ def test_notes_have_their_own_model_and_fallback_while_answers_keep_the_draft_mo
     deploy = (TEMPLATE.parents[1] / "scripts/deploy.sh").read_text()
     assert "NOTE_MODEL_ID: !Ref NoteModelId" in template and "NOTE_FALLBACK_MODEL_ID: !Ref NoteFallbackModelId" in template
     # Every model is back on Opus 5 since the user's decision of 2026-09-23; the switch stays one value.
-    assert "NoteModelId=global.anthropic.claude-opus-5 " in deploy + " "
+    # Notes run on Opus 5.5 at high since 2026-09-25, with Opus 5 as the fallback: Opus 5 declined
+    # klein-2023-genot three times and Opus 5.5 wrote it in one call, so the fallback absorbs
+    # whichever papers the primary refuses rather than either model being the strict one.
+    assert "NoteModelId=global.anthropic.claude-opus-5-5 " in deploy + " "
+    assert "NoteFallbackModelId=global.anthropic.claude-opus-5 " in deploy + " "
     assert "NoteFallbackModelId=global.anthropic.claude-opus-5 " in deploy + " "
     assert "DraftModelId=global.anthropic.claude-opus-5 " in deploy + " "
     source = LAMBDA_SOURCE.read_text()

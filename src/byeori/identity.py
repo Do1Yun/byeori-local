@@ -34,7 +34,12 @@ TEI_HEAD_BYTES = 80_000
 MIN_TITLE_OVERLAP = 0.6
 # A paper, not the code or the data it came with. Zenodo holds software deposits that carry the
 # paper's exact title, and one of them was accepted as the paper itself before this existed.
-PAPER_TYPES = ("article", "review", "preprint", "book-chapter", "letter", "editorial")
+# `proceedings-article` is a conference paper, which in engineering and machine learning is the
+# paper, not a record of a meeting (user, 2026-09-24: "공학쪽에선 논문이에요"). The lab's own
+# additions to the collection list - ICLR, NeurIPS, ICML, PMLR with AISTATS and COLT - are all
+# registered under this type, so leaving it out refused the very venues the list names.
+PAPER_TYPES = ("article", "review", "preprint", "book-chapter", "letter", "editorial",
+               "proceedings-article")
 # OpenAlex fields that are large, derivable, or of no use to a catalog row. `push_candidate` drops
 # `raw` for the same reason; `abstract` is dropped as well, since no page may be written from one.
 DROPPED_RECORD_FIELDS = ("raw", "referenced_works", "abstract")
@@ -403,6 +408,41 @@ def crossref_by_doi(doi: str) -> dict[str, Any] | None:
     return {"journal": container, "title": (message.get("title") or [None])[0],
             "authors": [name for name in authors if name],
             "publication_year": issued[0] if issued else None, "type": message.get("type")}
+
+
+def _crossref_message(message: dict[str, Any]) -> dict[str, Any]:
+    issued = ((message.get("issued") or {}).get("date-parts") or [[None]])[0]
+    authors = [" ".join(part for part in (person.get("given"), person.get("family")) if part)
+               for person in (message.get("author") or [])]
+    return {"doi": message.get("DOI"), "journal": (message.get("container-title") or [None])[0],
+            "title": (message.get("title") or [None])[0],
+            "authors": [name for name in authors if name],
+            "publication_year": issued[0] if issued else None, "type": message.get("type")}
+
+
+def crossref_by_title(query: str, *, year: int | None = None, rows: int = 5) -> list[dict[str, Any]]:
+    """Ask Crossref for the papers whose bibliographic text matches, newest registrations included.
+
+    `crossref_by_doi` needs a DOI, and a paper whose PDF prints none has nowhere to start. Crossref
+    registers a paper the day it appears, months before OpenAlex indexes it, so this reaches a
+    recent paper that an OpenAlex title search cannot see. It returns candidates and settles
+    nothing: the caller judges each one against the PDF exactly as it judges an OpenAlex result.
+    """
+    if not (query or "").strip():
+        return []
+    params = {"query.bibliographic": query, "rows": str(max(1, rows)),
+              "select": "DOI,title,author,container-title,issued,type"}
+    if year:
+        params["filter"] = f"from-pub-date:{year - 1}-01-01,until-pub-date:{year + 1}-12-31"
+    url = "https://api.crossref.org/works?" + urllib.parse.urlencode(params)
+    request = urllib.request.Request(url, headers={"User-Agent": user_agent("byeori/0.1")})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            items = (json.load(response).get("message") or {}).get("items") or []
+    except Exception:
+        return []
+    time.sleep(0.1)
+    return [_crossref_message(item) for item in items if item.get("DOI")]
 # Where a copy sits rather than where the paper was published: PubMed, PubMed Central, Zenodo,
 # university archives, and aggregators such as DOAJ. Anything else, including a source whose type
 # OpenAlex left out, is taken as the publication.

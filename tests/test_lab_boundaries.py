@@ -36,7 +36,7 @@ CAMPAIGN_MODULES = frozenset({
     "byeori.agent_cache",
 })
 # Client libraries that stay out of the server modules; the student MCP client may use two of them.
-CLIENT_LIBRARIES = frozenset({"mcp", "httpx", "fitz"})
+CLIENT_LIBRARIES = frozenset({"mcp", "httpx", "fitz", "pymupdf"})
 CLIENT_MODULE = "lab_mcp_server.py"
 CLIENT_MODULE_MAY_IMPORT = frozenset({"mcp", "httpx"})
 # P4 (design section 7, user approval of 2026-09-21 after the campaign closed): the approved research

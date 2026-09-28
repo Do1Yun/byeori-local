@@ -14,22 +14,23 @@ from your computer.
 
 ## Per paper
 
-The evidence note is almost the whole cost of a paper. The lab's estimate assumes a paper of
-12,000 input tokens (the extracted full text plus the writing rules) and 3,000 output tokens (the
-note):
+The evidence note is almost the whole cost of a paper. These are the lab's notes, priced from the
+input and output tokens the catalog table records for each one, at Bedrock list prices with no
+prompt caching:
 
-| Model | One paper | 1,000 papers |
-|---|---:|---:|
-| Claude Opus 5 (the default) | about $0.135 | about $135 |
-| Claude Sonnet 5 | about $0.055 | about $55 |
+| Model | Notes measured | One paper (median) | 1,000 papers |
+|---|---:|---:|---:|
+| Claude Opus 5.5 (what `byeori deploy` sets) | 52 | $0.244 | about $244 |
+| Claude Opus 5 (the fallback, and the template default) | 12,807 | $0.375 | about $375 |
 
 Add about $0.02 per paper for the rest: GROBID extraction and the figure worker on Fargate (about
 a cent together) and the OpenAlex lookups.
 
-Two things move the note's cost. A long paper reads more tokens; the lab's three measured papers
-read between 9,000 and 26,000. And "thinking" (`IngestReasoning`, which the installer deploys at
-`high`) is billed as output on top of the 3,000: a single note the lab measured on Opus 5 with
-thinking on came to about $0.30. Set `IngestReasoning=default` in `byeori deploy` for no thinking.
+Two things move the note's cost. A long paper reads more tokens: the median note read about 25,000
+input tokens and wrote about 9,800, thinking included. And "thinking" (`IngestReasoning`, which
+the installer deploys at `high`) is billed as output; set `IngestReasoning=default` in
+`byeori deploy` for no thinking. When Opus 5.5 declines a paper, Opus 5 writes it in the same call,
+so that paper costs both calls.
 
 ## Per question
 

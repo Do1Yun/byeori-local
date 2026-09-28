@@ -1,4 +1,4 @@
-"""Member registry for the student question workflow (docs/LAB-QUESTION-WORKFLOW.md, section 3).
+"""Member registry for the student question workflow (docs/LAB-SERVICE.md, section 3).
 
 The gateway authenticates a request by the IAM principal the Function URL reports and looks it
 up in the control table: ``PRINCIPAL#{UserId}/MEMBER`` points at ``MEMBER#{member_id}/PROFILE``,

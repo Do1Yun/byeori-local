@@ -194,6 +194,14 @@ Resources:
                   - s3:PutObject
                   - s3:GetObject
                 Resource: !Sub "${DataBucket.Arn}/*"
+              # The one delete the application makes: a note superseded by another note of the same
+              # paper (supersede_note, 2026-09-25). Evidence notes only; the bucket is versioned, so
+              # the delete leaves a marker over a version that can be restored, and the note is also
+              # copied to runs/superseded-notes/ first.
+              - Effect: Allow
+                Action:
+                  - s3:DeleteObject
+                Resource: !Sub "${DataBucket.Arn}/wiki/sources/*"
               - Effect: Allow
                 Action:
                   - s3:ListBucket

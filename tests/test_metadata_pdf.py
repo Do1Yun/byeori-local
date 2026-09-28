@@ -141,7 +141,7 @@ def test_parse_errors_and_image_only_first_page_are_explicit(monkeypatch):
     assert inspect(ReadOnlyS3())["errors"] == ["no_first_page_text"]
 
 
-def test_extract_first_page_imports_fitz_lazily_and_never_selects_page_two(monkeypatch):
+def test_extract_first_page_imports_pymupdf_lazily_and_never_selects_page_two(monkeypatch):
     loaded_pages = []
     class Document:
         page_count = 2
@@ -157,9 +157,21 @@ def test_extract_first_page_imports_fitz_lazily_and_never_selects_page_two(monke
     def open_pdf(**kwargs):
         assert kwargs == {"stream": RAW, "filetype": "pdf"}
         return Document()
-    monkeypatch.setitem(sys.modules, "fitz", SimpleNamespace(open=open_pdf))
+    monkeypatch.setitem(sys.modules, "pymupdf", SimpleNamespace(open=open_pdf))
     assert pdf.extract_first_page(RAW) == TEXT
     assert loaded_pages == [0]
+
+
+def test_extract_first_page_falls_back_to_fitz_before_pymupdf_was_renamed(monkeypatch):
+    """PyMuPDF older than 1.24.3 ships only `fitz`, which the AWS worker image may still hold."""
+    class Document:
+        page_count, needs_pass = 1, False
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def load_page(self, page): return SimpleNamespace(get_text=lambda kind, sort: TEXT)
+    monkeypatch.setitem(sys.modules, "pymupdf", None)   # import pymupdf -> ImportError
+    monkeypatch.setitem(sys.modules, "fitz", SimpleNamespace(open=lambda **kwargs: Document()))
+    assert pdf.extract_first_page(RAW) == TEXT
 
 
 def test_real_tiny_pdf_first_page_when_pymupdf_is_available():

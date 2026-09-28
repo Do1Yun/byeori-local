@@ -1,4 +1,4 @@
-"""Publisher and archive injection into the research engine (docs/LAB-QUESTION-WORKFLOW.md section 7, P4).
+"""Publisher and archive injection into the research engine (docs/LAB-SERVICE.md section 7, P4).
 
 The approved research worker reuses ``question_agent.run_answer`` with an injected publisher so one
 scope check covers every wiki write, and keeps the final answer in an operational receipt instead of

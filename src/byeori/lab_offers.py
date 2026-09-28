@@ -1,4 +1,4 @@
-"""Synthesis offers and the student's consent record (docs/LAB-QUESTION-WORKFLOW.md, P3).
+"""Synthesis offers and the student's consent record (docs/LAB-SERVICE.md, P3).
 
 The triage worker calls ``issue`` when a verdict passed the 0.99 cutoff and the wiki-scope check
 found a concrete supplement or gap. The offer is a fixed proposal: its ``hash`` covers the offer

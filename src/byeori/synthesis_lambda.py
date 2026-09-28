@@ -55,6 +55,8 @@ PARTIALS_PER_MERGE = 15
 MAX_CALLS_PER_INVOCATION = 3   # three Opus calls at xhigh fit inside the 900 s Lambda limit
 MAX_INPUT_CHARS = 400_000
 PAGE_MAX_TOKENS = 8_000
+PAGE_LONG_MAX_TOKENS = 20_000  # a page with many members needs more room than the default
+PAGE_LONG_INPUT_CHARS = 250_000  # above this a page is given the longer budget
 PLAN_MAX_TOKENS = 32_000       # a partition lists every stem of a category
 PARTITION_SPLIT = 250          # a category with more notes is proposed in halves, then merged
 PARTITION_LIMITS = {"min_subtopics": 4, "max_subtopics": 12, "min_notes": 5}
@@ -870,6 +872,17 @@ def _batches(inputs: list[str], header: str) -> list[list[str]]:
     return batches
 
 
+def _page_budget(prompt: str) -> int:
+    """How much room one page is given, from how much it was given to read.
+
+    The pages that finished at PAGE_MAX_TOKENS sent under about 250,000 characters; the one that
+    stopped on max_tokens sent more (2026-09-24). This is a ceiling, not a charge: a page that does
+    not need the room does not pay for it, and deciding before the call keeps a long page inside the
+    900-second invocation that asking twice blew through.
+    """
+    return PAGE_LONG_MAX_TOKENS if len(prompt) > PAGE_LONG_INPUT_CHARS else PAGE_MAX_TOKENS
+
+
 def _hierarchical(folder: str, ident: str, header: str, inputs: list[str], system: str, merge_system: str,
                   sections: tuple[str, ...], validate, *, work_id: str, kind: str) -> dict:
     """Write one page from many inputs, at most MAX_CALLS_PER_INVOCATION Bedrock calls per invocation.
@@ -892,7 +905,15 @@ def _hierarchical(folder: str, ident: str, header: str, inputs: list[str], syste
     usage, total = Usage(), Usage()
     batches = _batches(inputs, header)
     if len(batches) == 1:
-        result = _generate(system, header + "\n\n" + "\n".join(batches[0]))
+        # A page whose members all fit one call can still want more room than PAGE_MAX_TOKENS to
+        # write them: single-cell-dl's 208-note representation-learning subtopic stopped on
+        # max_tokens while its twelve siblings, 15 to 153 notes, finished at 55-105 KB
+        # (2026-09-24). The room is decided before the call, not after: asking twice spent the
+        # first call's minutes and then timed out the 900 s invocation on the second.
+        # maxTokens is a ceiling, not a charge, so a page that does not need the room does not pay
+        # for it.
+        prompt = header + "\n\n" + "\n".join(batches[0])
+        result = _generate(system, prompt, max_tokens=_page_budget(prompt))
         usage.add(result)
         total.add(result)
         # The page's shape is asked for in the prompt, not enforced here. Only a generation that did

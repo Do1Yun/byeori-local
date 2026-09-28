@@ -81,10 +81,16 @@ def classify_text(text: str, *, doi: str | None = None, title: str | None = None
 
 def extract_first_page(raw: bytes) -> str:
     """Parse only page one from memory. No local PDF or rendered preview is created."""
-    import fitz
+    # PyMuPDF prints a deprecation notice on stdout when it is imported as `fitz`, and the intake
+    # scripts that read a page-one opening print their receipt there; `pymupdf` is the same library
+    # under the name it has carried since 1.24.3.
+    try:
+        import pymupdf
+    except ImportError:
+        import fitz as pymupdf
 
     # S3 reads may run concurrently, but PyMuPDF parsing is serialized per process.
-    with _PARSE_LOCK, fitz.open(stream=raw, filetype="pdf") as document:
+    with _PARSE_LOCK, pymupdf.open(stream=raw, filetype="pdf") as document:
         if document.page_count < 1 or document.needs_pass:
             raise ValueError("PDF has no accessible first page")
         return document.load_page(0).get_text("text", sort=True)

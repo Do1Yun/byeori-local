@@ -1,4 +1,4 @@
-"""Asynchronous Jev triage of one finished answer job (docs/LAB-QUESTION-WORKFLOW.md, P3).
+"""Asynchronous Jev triage of one finished answer job (docs/LAB-SERVICE.md, P3).
 
 The triage worker runs after the answer was delivered, so nothing here can delay or fail the
 answer. For a ``completed`` or ``partial`` answer job it re-reads the job and its ``answer.json``

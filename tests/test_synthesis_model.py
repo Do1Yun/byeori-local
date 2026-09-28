@@ -158,8 +158,11 @@ def test_the_synthesis_function_has_its_own_model_effort_and_fallback():
     for line in ("SYNTHESIS_MODEL_ID: !Ref SynthesisModelId", "SYNTHESIS_FALLBACK_MODEL_ID: !Ref SynthesisFallbackModelId",
                  "SYNTHESIS_REASONING: !Ref SynthesisReasoning"):
         assert line in template
-    # Synthesis runs on Opus 5 at high since the user's decision of 2026-09-23 (Opus 5.5's filtering); one value switches it.
-    for override in ("SynthesisModelId=global.anthropic.claude-opus-5 ", "SynthesisFallbackModelId=global.anthropic.claude-opus-5 ",
+    # Synthesis runs on Opus 5.5 at high since 2026-09-24, with Opus 5 as the fallback. The refusals
+    # that had sent it back to Opus 5 on 2026-09-23 were at xhigh; at high, Opus 5.5 wrote 63 pages
+    # across five fields and was declined on none, for 20% less. The fallback stays Opus 5 so a
+    # declined page is still written, and the model is one value either way.
+    for override in ("SynthesisModelId=global.anthropic.claude-opus-5-5 ", "SynthesisFallbackModelId=global.anthropic.claude-opus-5 ",
                      "SynthesisReasoning=high "):
         assert override in deploy
 

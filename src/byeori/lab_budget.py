@@ -1,4 +1,4 @@
-"""Integer micro-USD budget ledger for lab question jobs (docs/LAB-QUESTION-WORKFLOW.md, P1).
+"""Integer micro-USD budget ledger for lab question jobs (docs/LAB-SERVICE.md, P1).
 
 Money is never a float here: one USD per million tokens is one micro-USD per token, so a usage
 report converts with an exact ceiling per token class. A job reserves its cap against the lab

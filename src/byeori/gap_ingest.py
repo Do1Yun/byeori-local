@@ -64,7 +64,7 @@ def blocked_list(job_id: str, query: str | None, skipped: Sequence[Mapping[str, 
     """The papers this gap needs that automatic collection cannot bring in.
 
     Serverless ingest takes only OpenAlex-hosted content under a Creative Commons or public-domain
-    licence (``.kiro/steering/ingest-policy.md``), so a paper in NEJM, Cell or a Nature Reviews
+    licence (``docs/ingest.md``, Evidence), so a paper in NEJM, Cell or a Nature Reviews
     title is saved as a candidate and stops there. Measured on 2026-09-22: six of eight candidates
     for one gap, including the very trial report the answer was missing.
 

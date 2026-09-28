@@ -1,4 +1,4 @@
-"""Policy constants for the student question workflow (docs/LAB-QUESTION-WORKFLOW.md).
+"""Policy constants for the student question workflow (docs/LAB-SERVICE.md).
 
 Every stored verdict, offer and approval records the revision that produced it, so a later
 change of a limit or the cutoff never rewrites how an earlier record was judged. Numbers here

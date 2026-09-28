@@ -83,7 +83,7 @@ def test_an_answer_with_no_body_or_citations_still_gets_a_page_that_says_so():
 
     assert report["page"] and report["hubs"] == [] and report["errors"] == []
     body = s3.objects["wiki/lab-questions/2026-09/j1.md"].decode("utf-8")
-    assert "_이 질문에는 답변 본문이 저장되지 않았습니다._" in body and "- _인용 없음_" in body
+    assert "_No answer text was saved for this question._" in body and "- _No citations_" in body
     assert "출력 한도에서 잘렸습니다." in body
 
 
@@ -102,7 +102,7 @@ def test_every_cited_page_gets_a_hub_and_later_answers_are_added_to_it():
     assert [hub["outcome"] for hub in second["hubs"]] == ["appended"]
     hub = s3.objects["wiki/lab-questions/by-page/sources/paper-one.md"].decode("utf-8")
     assert hub.index("[[lab-questions/2026-09/j2|두 번째 질문]]") < hub.index("[[lab-questions/2026-09/j1")
-    assert "# [[sources/paper-one]] 을 근거로 답한 질문" in hub and "indexed: false" in hub
+    assert "# Questions whose answers cited [[sources/paper-one]]" in hub and "indexed: false" in hub
     # A synthesis page is reachable the same way as a source note.
     assert "wiki/lab-questions/by-page/overviews/regional.md" in s3.objects
 
@@ -159,7 +159,7 @@ def test_a_question_page_never_becomes_a_hub_of_its_own():
 
 def test_the_standing_line_an_indexed_page_carries_points_at_its_own_hub():
     line = lab_pages.page_link_line("sources/paper-one")
-    assert line == "- 이 페이지를 근거로 답한 랩 질문: [[lab-questions/by-page/sources/paper-one]]"
+    assert line == "- [[lab-questions/by-page/sources/paper-one|Answered questions that cited this page]]"
     assert lab_pages.hub_key("sources/paper-one") == "wiki/lab-questions/by-page/sources/paper-one.md"
 
 

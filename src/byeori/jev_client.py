@@ -1,4 +1,4 @@
-"""Three-state Jev client for the student question workflow (docs/LAB-QUESTION-WORKFLOW.md, section 6).
+"""Three-state Jev client for the student question workflow (docs/LAB-SERVICE.md, section 6).
 
 The deployed ``jev_eval``/``jev_triage`` modules stay as they are; this module reimplements the
 HTTP post, redirect and proxy blocking, response validation and secret handling for the

@@ -1,4 +1,4 @@
-"""Evidence packet selection over the shared BM25 index (docs/LAB-QUESTION-WORKFLOW.md section 5)."""
+"""Evidence packet selection over the shared BM25 index (docs/LAB-SERVICE.md section 5)."""
 import sqlite3
 import time
 

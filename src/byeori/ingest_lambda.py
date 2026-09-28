@@ -826,9 +826,16 @@ def _set_note_category(stem, category):
     if etag is None:
         return "no_note"
     head, sep, body = text.partition("\n---\n")
-    if not sep or not re.search(r"^category:", head, re.M):
-        return "no_category_line"
-    new_head = re.sub(r'^category:.*$', f'category: "{category}"', head, count=1, flags=re.M)
+    if not sep:
+        return "no_frontmatter"
+    if re.search(r"^category:", head, re.M):
+        new_head = re.sub(r'^category:.*$', f'category: "{category}"', head, count=1, flags=re.M)
+    else:
+        # The notes written when a paper's stem was its work id carry no `category:` line at all,
+        # and the index reads those as the field `note`, which is where that pseudo-field came from.
+        # They are ordinary lab papers - the first of the 42 is Cotney 2015 on CHD8 and autism risk
+        # genes - so the line is added rather than the note refused (2026-09-24).
+        new_head = head.rstrip("\n") + f'\ncategory: "{category}"'
     if new_head == head:
         return "unchanged"
     try:
@@ -894,6 +901,141 @@ def _remember_open_fields(folders):
     except botocore.exceptions.ClientError:
         return False
     return True
+
+
+SUPERSEDED_NOTES_PREFIX = "runs/superseded-notes/"
+_PAGE_FOLDERS = {"note": "sources", "concept": "concepts", "overview": "overviews", "question": "questions"}
+_SOURCE_NOTES_LINE = re.compile(r'^source_notes:\s*(\[.*\])\s*$', re.M)
+
+
+def _redirect_note_links(text, drop, keep, keep_sha):
+    """The page with every link to ``drop``'s note pointed at ``keep``'s, and its evidence list agreeing.
+
+    A synthesis page lists the notes it was written from in ``source_notes`` with each note's hash;
+    when the page already lists ``keep`` the entry for ``drop`` goes, otherwise it becomes ``keep``
+    with ``keep``'s hash, so the page reads as written from a changed note - which it now is.
+    """
+    body = re.sub(r"\[\[sources/" + re.escape(drop) + r"(\||\]\])", "[[sources/" + keep + r"\1", text)
+    match = _SOURCE_NOTES_LINE.search(body)
+    if not match:
+        return body
+    try:
+        entries = json.loads(match.group(1))
+    except ValueError:
+        return body
+    if not isinstance(entries, list) or not any(isinstance(e, dict) and e.get("stem") == drop for e in entries):
+        return body
+    if any(isinstance(e, dict) and e.get("stem") == keep for e in entries):
+        entries = [e for e in entries if not (isinstance(e, dict) and e.get("stem") == drop)]
+        body = re.sub(r'^note_count:\s*(\d+)\s*$', lambda m: f"note_count: {int(m.group(1)) - 1}", body,
+                      count=1, flags=re.M)
+    else:
+        entries = [{"stem": keep, "sha256": keep_sha} if isinstance(e, dict) and e.get("stem") == drop else e
+                   for e in entries]
+    return body[:match.start(1)] + json.dumps(entries, ensure_ascii=False) + body[match.end(1):]
+
+
+def _supersede_note(event, index):
+    """Take one of two notes of the same paper out of the wiki, and point everything that cited it at the other.
+
+    A paper can hold two notes when it entered twice: as a bioRxiv preprint and as the published
+    paper, or under two stems. The user decided the preprint or older version goes (2026-09-25).
+    Retiring the row alone would leave its note in wiki/sources/, still indexed, and every synthesis
+    page citing it would go on citing a paper the catalogue no longer holds, so this does it in order:
+
+    1. every page that links ``drop``'s note is rewritten to link ``keep``'s, conditional on the read;
+    2. only when every one of them was, ``drop``'s note is copied to runs/superseded-notes/ and
+       removed from wiki/sources/ (the bucket is versioned, so the removal is a delete marker);
+    3. ``drop``'s catalogue row is retired onto ``keep``, and ``keep`` takes the DOI if it had none.
+
+    The paper's originals under papers/{drop}/ are not touched. Subtopic manifests that name ``drop``
+    heal on their own: the planner keeps only members that still have a note.
+    """
+    drop, keep = str(event.get("drop") or ""), str(event.get("keep") or "")
+    for stem in (drop, keep):
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", stem):
+            raise ValueError("drop and keep must each be a paper stem")
+    if drop == keep:
+        raise ValueError("drop and keep must differ")
+    apply = bool(event.get("apply"))
+    drop_key, keep_key = f"wiki/sources/{drop}.md", f"wiki/sources/{keep}.md"
+    keep_text, keep_etag = _read_published(keep_key)
+    if keep_etag is None:
+        raise ValueError(f"{keep} has no note to keep")
+    drop_text, drop_etag = _read_published(drop_key)
+    result = {"drop": drop, "keep": keep, "applied": apply, "execution": "aws"}
+    if drop_etag is None:
+        return result | {"state": "already_gone"}
+    keep_sha = hashlib.sha256(keep_text.encode("utf-8")).hexdigest()
+
+    con, index_etag = index()
+    try:
+        rows = con.execute(
+            "SELECT DISTINCT l.from_type, l.from_id, d.path FROM links l "
+            "JOIN docs d ON d.doc_type = l.from_type AND d.doc_id = l.from_id "
+            "WHERE l.to_type = 'note' AND l.to_id = ?", (drop,)).fetchall()
+    finally:
+        con.close()
+    # The key comes from the page's kind and id, as a search hit's does (evidence_packet.hit_key, which
+    # this campaign Lambda may not import); `docs.path` still carries the campaign's data/ layout, and
+    # reading it as the key found none of 32 citing pages (2026-09-25).
+    citing = sorted({f"wiki/{_PAGE_FOLDERS[t]}/{i}.md" if t in _PAGE_FOLDERS else str(p or "").removeprefix("data/")
+                     for t, i, p in rows})
+    citing = [key for key in citing if key != drop_key]
+    pages = []
+    for key in citing:
+        text, etag = _read_published(key)
+        if etag is None:
+            pages.append({"key": key, "state": "missing"})
+            continue
+        new = _redirect_note_links(text, drop, keep, keep_sha)
+        if new == text:
+            pages.append({"key": key, "state": "no_link_found"})
+            continue
+        if apply:
+            try:
+                s3.put_object(Bucket=BUCKET_NAME, Key=key, Body=new.encode("utf-8"),
+                              ContentType="text/markdown; charset=utf-8", IfMatch=etag)
+            except botocore.exceptions.ClientError as exc:
+                if exc.response.get("Error", {}).get("Code") in ("PreconditionFailed", "412"):
+                    pages.append({"key": key, "state": "raced"})
+                    continue
+                raise
+        pages.append({"key": key, "state": "redirected" if apply else "would_redirect"})
+    result |= {"citing_pages": len(citing), "pages": pages, "index_etag": index_etag}
+    # A page the index says cites the note but that cannot be read, or that moved, keeps the note in
+    # place: removing it then would leave that page's link pointing at nothing.
+    if any(page["state"] in ("raced", "missing") for page in pages):
+        return result | {"state": "a_citing_page_unresolved_note_kept"}
+    if not apply:
+        return result | {"state": "would_supersede"}
+
+    archive_key = f"{SUPERSEDED_NOTES_PREFIX}{drop}.md"
+    s3.put_object(Bucket=BUCKET_NAME, Key=archive_key, Body=drop_text.encode("utf-8"),
+                  ContentType="text/markdown; charset=utf-8",
+                  Metadata={"superseded-by": keep, "source-key": drop_key})
+    s3.delete_object(Bucket=BUCKET_NAME, Key=drop_key)
+
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    dropped = table.get_item(Key={"work_id": drop}).get("Item") or {}
+    kept = table.get_item(Key={"work_id": keep}).get("Item") or {}
+    doi = dropped.get("doi")
+    real_doi = bool(doi) and not str(doi).startswith(("openalex:", "superseded:"))
+    table.update_item(
+        Key={"work_id": drop},
+        UpdateExpression=("SET superseded_by = :keep, superseded_at = :at, superseded_reason = :why, "
+                          "source_note_status = :status, source_note_archived_key = :archive"
+                          + (", #doi = :sentinel" if real_doi else "")),
+        ExpressionAttributeValues={":keep": keep, ":at": now, ":status": "superseded", ":archive": archive_key,
+                                   ":why": str(event.get("why") or f"another note of the same paper as {keep}")[:500],
+                                   **({":sentinel": f"superseded:{drop}"} if real_doi else {})},
+        **({"ExpressionAttributeNames": {"#doi": "doi"}} if real_doi else {}))
+    if real_doi and not kept.get("doi"):
+        table.update_item(Key={"work_id": keep}, UpdateExpression="SET #doi = :doi",
+                          ConditionExpression=Attr("doi").not_exists(),
+                          ExpressionAttributeNames={"#doi": "doi"}, ExpressionAttributeValues={":doi": doi})
+        result["keep_took_doi"] = doi
+    return result | {"state": "superseded", "archive_key": archive_key}
 
 
 def _sync_note_categories(event, index):
@@ -1403,6 +1545,27 @@ def _llm_wiki_frontmatter(stem, item, meta, model_id, extra, *, harness=None, ag
     return "---\n" + "\n".join(f"{k}: {json.dumps(v, ensure_ascii=False)}" for k, v in fields) + "\n---\n\n"
 
 
+def _rewritten_frontmatter(front, existing):
+    """The frontmatter of a note rewritten in AWS: this call's writer, the page's first date.
+
+    Every field is built again from the record, so the provenance names what wrote this text. The
+    `created` date stays the page's own, the `revised_*` fields of a local correction go with the
+    text they described, and a field this builder does not write is carried over unchanged.
+    """
+    from byeori.wiki_connections import _frontmatter
+    old_front, _ = _frontmatter(existing)
+    old = {}
+    for line in old_front.splitlines()[1:-1]:
+        name, sep, _ = line.partition(":")
+        if sep:
+            old[name.strip()] = line
+    lines = front.rstrip("\n").splitlines()[1:-1]
+    built = {line.partition(":")[0].strip() for line in lines}
+    lines = [old["created"] if line.startswith("created:") and "created" in old else line for line in lines]
+    lines += [line for name, line in old.items() if name not in built and name not in NOTE_REVISION_FIELDS]
+    return "---\n" + "\n".join(lines) + "\n---\n\n"
+
+
 def _document_information(meta):
     rows = [("Title", meta.get("title")), ("Authors", meta.get("authors")), ("Year", meta.get("year")),
             ("Venue", meta.get("journal")), ("DOI", meta.get("doi")), ("PMID", meta.get("pmid")),
@@ -1493,15 +1656,20 @@ def _source_note(event):
                 "problems": result["problems"], "seconds": result["seconds"], "stop_reason": result["stop_reason"],
                 "sha256": hashlib.sha256(page.encode("utf-8")).hexdigest()}
     key = f"wiki/sources/{'failed/' if result['problems'] else ''}{stem}.md"
-    page = _llm_wiki_frontmatter(stem, item, meta, model_id, []) + body + "\n"
+    front = _llm_wiki_frontmatter(stem, item, meta, model_id, [])
+    if existing and not result["problems"]:
+        front = _rewritten_frontmatter(front, existing)
+    page = front + body + "\n"
     digest = hashlib.sha256(page.encode("utf-8")).hexdigest()
     publication = None
     if result["problems"]:
         s3.put_object(Bucket=BUCKET_NAME, Key=key, Body=page.encode("utf-8"), ContentType="text/markdown; charset=utf-8")
     else:
         from byeori.wiki_connections import publish_page
+        # A rewrite names its own writer: the frontmatter built here replaces the one in place,
+        # which may say a Claude Code session wrote the note this call has just rewritten.
         publication = publish_page(s3, BUCKET_NAME, key, page, expected_etag=expected_etag,
-                                   create_only=expected_etag is None)
+                                   create_only=expected_etag is None, keep_frontmatter=False)
         digest = publication["sha256"]
 
     usage = result["usage"]
@@ -1511,6 +1679,21 @@ def _source_note(event):
     values = {":st": status, ":key": key, ":digest": digest, ":model": model_id,
               ":inp": int(usage.get("inputTokens", 0)), ":out": int(usage.get("outputTokens", 0)),
               ":sec": Decimal(str(result["seconds"])), ":at": result["generated_at"], ":problems": result["problems"]}
+    removed = []
+    if publication:
+        expression += ", source_note_written_by = :by"
+        values[":by"] = INGEST_HARNESS
+        if publication.get("replaced"):
+            # The revisions recorded on the replaced text no longer describe the note; the history
+            # keeps them, and the rewrite itself, with the sha256 before and after.
+            expression += (", source_note_revisions = list_append("
+                           "if_not_exists(source_note_revisions, :none), :rewrite)")
+            values[":none"] = []
+            values[":rewrite"] = [{"at": result["generated_at"], "kind": "rewrite", "harness": INGEST_HARNESS,
+                                   "model_id": model_id,
+                                   "before_sha256": hashlib.sha256(existing.encode("utf-8")).hexdigest(),
+                                   "after_sha256": digest}]
+            removed += ["source_note_revision_count", "source_note_revised_at"]
     if filtered:
         expression += (", source_note_filtered_model = :fmodel, source_note_filtered_input_tokens = :finp, "
                        "source_note_filtered_output_tokens = :fout")
@@ -1518,8 +1701,10 @@ def _source_note(event):
                    ":fout": filtered["usage"].get("outputTokens", 0)}
     else:
         # A decline recorded by an earlier generation of this note no longer describes it.
-        expression += (" REMOVE source_note_filtered_model, source_note_filtered_input_tokens, "
-                       "source_note_filtered_output_tokens")
+        removed += ["source_note_filtered_model", "source_note_filtered_input_tokens",
+                    "source_note_filtered_output_tokens"]
+    if removed:
+        expression += " REMOVE " + ", ".join(removed)
     table.update_item(Key={"work_id": stem}, UpdateExpression=expression, ExpressionAttributeValues=values)
     return {"stem": stem, "status": status, "source_note_key": key, "model_id": model_id,
             "filtered_attempt": filtered, "publication": publication,
@@ -1528,8 +1713,16 @@ def _source_note(event):
 
 
 
-LOCAL_NOTE_PROVENANCE = {"harness": "claude-code", "agent": "byeori-note-local",
-                         "agent_version": "v1", "reasoning": "default"}
+LOCAL_NOTE_PROVENANCE = {"harness": "claude-code", "agent": "byeori-note-local", "agent_version": "v1"}
+
+
+def _local_reasoning(event):
+    """The reasoning level of the session agent that wrote a local note (user, 2026-09-27: record the
+    local agent's model and reasoning level). Required, so a note never again says `default`."""
+    reasoning = str(event.get("reasoning") or "").strip()
+    if reasoning not in EFFORT_LEVELS:
+        raise ValueError(f"reasoning must be the writing agent's effort level, one of {', '.join(EFFORT_LEVELS)}")
+    return reasoning
 EXTRACTION_MAX_CHARS = 40_000
 
 
@@ -1576,6 +1769,7 @@ def _publish_source_note(event):
     model_id = str(event.get("model_id") or "").strip()
     if not re.fullmatch(r"[a-z0-9.-]+", model_id):
         raise ValueError("model_id must name the model that actually wrote this note, e.g. claude-opus-5")
+    reasoning = _local_reasoning(event)
     item, meta = _stem_item(stem)
     if item.get("ingest_status") not in ("fulltext_ready", "model_draft", "draft_failed"):
         raise ValueError(f"{stem} has no extracted text yet (ingest_status {item.get('ingest_status')})")
@@ -1590,7 +1784,8 @@ def _publish_source_note(event):
         head, tail = body.split(marker, 1)
         body = head.rstrip() + "\n\n" + _document_information(meta) + "\n" + marker + tail
     key = f"wiki/sources/{stem}.md"
-    page = _llm_wiki_frontmatter(stem, item, meta, model_id, [], **LOCAL_NOTE_PROVENANCE) + body + "\n"
+    page = _llm_wiki_frontmatter(stem, item, meta, model_id, [], **LOCAL_NOTE_PROVENANCE,
+                                 reasoning=reasoning) + body + "\n"
     from byeori.wiki_connections import publish_page
     publication = publish_page(s3, BUCKET_NAME, key, page, create_only=True)
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -1600,17 +1795,152 @@ def _publish_source_note(event):
         Key={"work_id": stem},
         UpdateExpression=("SET source_note_status = :st, source_note_key = :key, source_note_sha256 = :digest, "
                           "source_note_model = :model, source_note_at = :at, source_note_problems = :problems, "
-                          "source_note_written_by = :by "
+                          "source_note_written_by = :by, source_note_reasoning = :reasoning "
                           "REMOVE source_note_input_tokens, source_note_output_tokens, source_note_seconds, "
                           "source_note_filtered_model, source_note_filtered_input_tokens, "
                           "source_note_filtered_output_tokens"),
         ExpressionAttributeValues={":st": "source_ready", ":key": key, ":digest": publication["sha256"],
                                    ":model": model_id, ":at": now, ":problems": [],
-                                   ":by": LOCAL_NOTE_PROVENANCE["harness"]})
+                                   ":by": LOCAL_NOTE_PROVENANCE["harness"], ":reasoning": reasoning})
     return {"stem": stem, "status": "source_ready", "source_note_key": key, "model_id": model_id,
+            "reasoning": reasoning,
             "source_note_sha256": publication["sha256"], "publication": publication,
             "written_by": LOCAL_NOTE_PROVENANCE["harness"], "problems": [], "published": True,
             "execution": "aws"}
+
+NOTE_REVISION_MAX_REPLACEMENTS = 50
+NOTE_REVISION_FIELDS = ("revised_harness", "revised_model_id", "revised_at", "revision_count", "revision_reason")
+
+
+def _note_section(body, heading):
+    start = re.search(r"^" + re.escape(heading) + r"[ \t]*$", body, re.M)
+    if not start:
+        return None
+    following = re.search(r"^## ", body[start.end():], re.M)
+    return body[start.start():start.end() + following.start() if following else len(body)]
+
+
+def _revise_source_note(event):
+    """Correct a published evidence note in place, from exact replacements made outside AWS.
+
+    `publish_source_note` writes only a paper's first note, so a defect found after publishing was
+    left for an AWS rewrite of the whole note. This path fixes the defect itself: each replacement
+    names text that occurs exactly once in the note's body and what it becomes. The headings, the
+    code-written Document Information table and the linked-pages block cannot change, so the note
+    stays the same object. The frontmatter keeps the first writer and gains the latest revision's
+    writer, model, time, count and reason; the catalogue keeps every revision.
+    """
+    from byeori.wiki_connections import BACKLINK_BLOCK, _frontmatter, publish_page
+    stem = str(event.get("stem", ""))
+    model_id = str(event.get("model_id") or "").strip()
+    if not re.fullmatch(r"[a-z0-9.-]+", model_id):
+        raise ValueError("model_id must name the model that made these corrections, e.g. claude-opus-5-5")
+    reason = " ".join(str(event.get("reason") or "").split())
+    if not 1 <= len(reason) <= 500:
+        raise ValueError("reason must say in 1 to 500 characters what was wrong")
+    expected = str(event.get("expected_sha256") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise ValueError("expected_sha256 must be the sha256 of the note as read (wiki-read returns it)")
+    replacements = event.get("replacements")
+    if (not isinstance(replacements, list) or not 1 <= len(replacements) <= NOTE_REVISION_MAX_REPLACEMENTS
+            or not all(isinstance(r, dict) and isinstance(r.get("old"), str) and isinstance(r.get("new"), str)
+                       and r["old"] and r["old"] != r["new"] for r in replacements)):
+        raise ValueError(f"replacements must be 1 to {NOTE_REVISION_MAX_REPLACEMENTS} "
+                         "{old, new} pairs with a nonempty old that differs from new")
+    item, _ = _stem_item(stem)
+    key = f"wiki/sources/{stem}.md"
+    if item.get("source_note_status") != "source_ready" or item.get("source_note_key") != key:
+        raise ValueError(f"{stem} has no published note to revise")
+    response = s3.get_object(Bucket=BUCKET_NAME, Key=key)
+    raw = response["Body"].read()
+    before = hashlib.sha256(raw).hexdigest()
+    if before != expected:
+        raise ValueError(f"{key} changed since it was read (sha256 {before}); read it again")
+    front, body = _frontmatter(raw.decode("utf-8"))
+
+    problems, revised = [], body
+    for number, pair in enumerate(replacements, start=1):
+        found = revised.count(pair["old"])
+        if found != 1:
+            problems.append(f"replacement {number}: old text occurs {found} times in the body, not once")
+            continue
+        revised = revised.replace(pair["old"], pair["new"], 1)
+    if not problems:
+        if re.findall(r"^## .*$", revised, re.M) != re.findall(r"^## .*$", body, re.M):
+            problems.append("the section headings would change")
+        if _note_section(revised, "## 1. Document Information") != _note_section(body, "## 1. Document Information"):
+            problems.append("the Document Information table is written from the record and cannot be edited")
+        if BACKLINK_BLOCK.findall(revised) != BACKLINK_BLOCK.findall(body):
+            problems.append("the linked-pages block is maintained in AWS and cannot be edited")
+        if DRAFT_FORBIDDEN.search(revised) and not DRAFT_FORBIDDEN.search(body):
+            problems.append("placeholder or filler text present")
+    if problems:
+        return {"stem": stem, "status": "refused", "problems": problems, "published": False, "execution": "aws"}
+
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    count = int(item.get("source_note_revision_count") or 0) + 1
+    kept = [line for line in front.splitlines()[1:-1] if line.split(":", 1)[0] not in NOTE_REVISION_FIELDS]
+    added = [("revised_harness", LOCAL_NOTE_PROVENANCE["harness"]), ("revised_model_id", model_id),
+             ("revised_at", now), ("revision_count", str(count)), ("revision_reason", reason)]
+    page = ("---\n" + "\n".join(kept + [f"{k}: {json.dumps(v, ensure_ascii=False)}" for k, v in added])
+            + "\n---\n" + revised)
+    publication = publish_page(s3, BUCKET_NAME, key, page, expected_etag=response.get("ETag"),
+                               keep_frontmatter=False)
+    entry = {"at": now, "harness": LOCAL_NOTE_PROVENANCE["harness"], "model_id": model_id, "reason": reason,
+             "replacements": len(replacements), "before_sha256": before, "after_sha256": publication["sha256"]}
+    table.update_item(
+        Key={"work_id": stem},
+        UpdateExpression=("SET source_note_sha256 = :digest, source_note_revised_at = :at, "
+                          "source_note_revision_count = :count, "
+                          "source_note_revisions = list_append(if_not_exists(source_note_revisions, :none), :entry)"),
+        ExpressionAttributeValues={":digest": publication["sha256"], ":at": now, ":count": count,
+                                   ":none": [], ":entry": [entry]})
+    return {"stem": stem, "status": "revised", "source_note_key": key, "revision": count,
+            "before_sha256": before, "after_sha256": publication["sha256"], "replacements": len(replacements),
+            "publication": publication, "problems": [], "published": True, "execution": "aws"}
+
+
+def _set_local_note_reasoning(event):
+    """Record the reasoning level on a local note published before it was recorded.
+
+    Until 2026-09-27 `publish_source_note` wrote `ingest_reasoning: "default"` on every note a Claude
+    Code session wrote. This replaces that one frontmatter line and nothing else, only on a local
+    note that still says `default`, and only as read (sha256), so a level is never written over
+    another one or onto an AWS note.
+    """
+    from byeori.wiki_connections import publish_page
+    stem = str(event.get("stem", ""))
+    reasoning = _local_reasoning(event)
+    expected = str(event.get("expected_sha256") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise ValueError("expected_sha256 must be the sha256 of the note as read (wiki-read returns it)")
+    item, _ = _stem_item(stem)
+    key = f"wiki/sources/{stem}.md"
+    if item.get("source_note_status") != "source_ready" or item.get("source_note_key") != key:
+        raise ValueError(f"{stem} has no published note")
+    response = s3.get_object(Bucket=BUCKET_NAME, Key=key)
+    raw = response["Body"].read()
+    before = hashlib.sha256(raw).hexdigest()
+    if before != expected:
+        raise ValueError(f"{key} changed since it was read (sha256 {before}); read it again")
+    text = raw.decode("utf-8")
+    end = text.find("\n---\n", 4)
+    front = text[:end] if text.startswith("---\n") and end > 0 else ""
+    harness_line = f'ingest_harness: {json.dumps(LOCAL_NOTE_PROVENANCE["harness"])}'
+    old_line = 'ingest_reasoning: "default"'
+    if harness_line not in front.splitlines():
+        raise ValueError(f"{stem} was not written by a local session; its reasoning is the deployment's")
+    if front.splitlines().count(old_line) != 1:
+        raise ValueError(f"{stem} already records its reasoning level")
+    page = text.replace(old_line, f"ingest_reasoning: {json.dumps(reasoning)}", 1)
+    publication = publish_page(s3, BUCKET_NAME, key, page, expected_etag=response.get("ETag"),
+                               keep_frontmatter=False)
+    table.update_item(Key={"work_id": stem},
+                      UpdateExpression="SET source_note_sha256 = :digest, source_note_reasoning = :reasoning",
+                      ExpressionAttributeValues={":digest": publication["sha256"], ":reasoning": reasoning})
+    return {"stem": stem, "status": "recorded", "reasoning": reasoning, "before_sha256": before,
+            "after_sha256": publication["sha256"], "published": True, "execution": "aws"}
+
 
 def _answer_question(event, context=None):
     from byeori.question_agent import run_answer
@@ -2056,10 +2386,16 @@ def _handle(event, _context):
         return _fields_action(event)
     if action == "sync_note_categories":
         return _sync_note_categories(event, _wiki_index)
+    if action == "supersede_note":
+        return _supersede_note(event, _wiki_index)
     if action == "build_category_catalogs":
         return _build_category_catalogs(event, _wiki_index)
     if action == "read_extraction":
         return _read_extraction(event)
     if action == "publish_source_note":
         return _publish_source_note(event)
+    if action == "revise_source_note":
+        return _revise_source_note(event)
+    if action == "set_local_note_reasoning":
+        return _set_local_note_reasoning(event)
     raise ValueError("action must be search, get, ingest, resolve_identity, draft, synthesize, wiki_search, wiki_backlinks, source_note, answer_question, build_index, or plan_notes")

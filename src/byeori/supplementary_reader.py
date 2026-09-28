@@ -475,23 +475,39 @@ class SupplementaryReader:
         return self._manifests[stem]
 
     def has_supplementary(self, stem: str) -> bool:
+        """Whether a table read can open something of this paper: a manifest naming at least one kept file.
+
+        A paper whose files are all in the lab's Resources folder (since 2026-09-27) has a manifest
+        but nothing stored, and an agent told it has supplementary files would try to read them.
+        """
         try:
-            self.s3.head_object(Bucket=self.bucket, Key=f"papers/{stem}/supplementary/manifest.json")
-            return True
-        except ClientError:
+            manifest = self.manifest(stem)
+        except (ReadError, ClientError):
             return False
+        return any(entry.get("decision") == "upload" for entry in manifest.get("files", []))
 
     def files(self, stem: str) -> list[dict[str, Any]]:
-        """The kept files: name, what they are, and whether a table read can open them."""
+        """The kept files: name, what they are, and whether a table read can open them.
+
+        Files kept only in the lab's Resources folder are listed too, as ``stored: false`` with
+        ``where`` naming the folder, so the agent can say where a value is instead of guessing.
+        """
+        manifest = self.manifest(stem)
         listed = []
-        for entry in self.manifest(stem).get("files", []):
-            if entry.get("decision") != "upload":
+        for entry in manifest.get("files", []):
+            decision = entry.get("decision")
+            if decision not in ("upload", "resource"):
                 continue
             suffix = PurePosixPath(entry["file"].lower()).suffix
-            listed.append({"file": entry["file"], "label": entry.get("label"), "kind": entry.get("kind"),
-                           "bytes": entry.get("bytes"), "uses": entry.get("uses") or [],
-                           "readable": "archive members" if suffix == ".zip" else bool(readable_format(entry["file"])),
-                           "summary": entry.get("summary")})
+            item = {"file": entry["file"], "label": entry.get("label"), "kind": entry.get("kind"),
+                    "bytes": entry.get("bytes"), "uses": entry.get("uses") or [],
+                    "readable": ("archive members" if suffix == ".zip" else bool(readable_format(entry["file"])))
+                    if decision == "upload" else False,
+                    "summary": entry.get("summary")}
+            if decision == "resource":
+                item["stored"] = False
+                item["where"] = manifest.get("resources_folder")
+            listed.append(item)
         return listed
 
     def guide(self, stem: str, *, start: int = 0, max_chars: int = 8000) -> dict[str, Any]:
@@ -515,6 +531,9 @@ class SupplementaryReader:
         outer, _, member = name.partition("::")
         for entry in self.manifest(stem).get("files", []):
             if entry.get("file") == outer:
+                if entry.get("decision") == "resource":
+                    where = self.manifest(stem).get("resources_folder") or "the lab's Resources folder"
+                    raise ReadError(f"{outer} is kept in {where}, not stored here; say where it is, do not guess its values")
                 if entry.get("decision") != "upload":
                     raise ReadError(f"{outer} was not kept, so it is not stored")
                 return entry, member or None
@@ -679,6 +698,9 @@ class SupplementaryReader:
                             candidates.append((member["bytes"], member["member"]))
                 except (ReadError, zipfile.BadZipFile) as exc:
                     skipped.append({"file": entry["file"], "reason": str(exc)[:200]})
+            elif entry.get("stored") is False:
+                where = entry.get("where") or "the lab's Resources folder"
+                skipped.append({"file": entry["file"], "reason": f"kept in {where}, not stored here"})
             else:
                 skipped.append({"file": entry["file"], "reason": "not a readable table"})
         for _, name in sorted(candidates):

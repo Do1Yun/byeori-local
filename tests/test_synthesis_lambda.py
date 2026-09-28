@@ -1091,6 +1091,29 @@ def _truncates(monkeypatch):
     return lambda: monkeypatch.setattr(lam, "_generate", previous)
 
 
+def test_a_long_page_is_given_its_room_before_the_call_not_after(world, monkeypatch) -> None:
+    """single-cell-dl's 208-note representation-learning subtopic stopped on max_tokens while its
+    twelve siblings, 15 to 153 notes, finished (2026-09-24). Asking a second time with more room
+    spent the first call's minutes and then timed out the 900-second invocation, so the room is
+    decided from the input before the one call that is made."""
+    assert lam.PAGE_LONG_MAX_TOKENS > lam.PAGE_MAX_TOKENS
+    short = "x" * (lam.PAGE_LONG_INPUT_CHARS - 1)
+    long = "x" * (lam.PAGE_LONG_INPUT_CHARS + 1)
+    assert lam._page_budget(short) == lam.PAGE_MAX_TOKENS
+    assert lam._page_budget(long) == lam.PAGE_LONG_MAX_TOKENS
+
+    _planned(world)
+    asked = []
+    previous = lam._generate
+    monkeypatch.setattr(lam, "_generate",
+                        lambda system, prompt, **kw: (asked.append(kw.get("max_tokens")),
+                                                      previous(system, prompt, **kw))[1])
+    world.responses.append(concept_text(STEMS))
+    result = lam.page({"action": "page", "kind": "concept", "slug": "scn2a", "mode": "generate"})
+    assert result["status"] == "ready" and len(asked) == 1, asked
+    assert asked[0] == lam.PAGE_MAX_TOKENS, "a small page is not given the long budget"
+
+
 def test_a_format_defect_does_not_withhold_the_page(world) -> None:
     """Nobody reads this wiki end to end, which is why it is built with agents at all.
 

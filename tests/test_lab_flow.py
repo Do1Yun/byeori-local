@@ -1,4 +1,4 @@
-"""End-to-end flows over the real lab modules and ``lab_fakes`` (docs/LAB-QUESTION-WORKFLOW.md, sections 6-8).
+"""End-to-end flows over the real lab modules and ``lab_fakes`` (docs/LAB-SERVICE.md, sections 6-8).
 
 Two paths a claimed question can take, exercised module by module exactly as the handlers call
 them, with nothing mocked inside the package. In the first, the model answers with a concrete
