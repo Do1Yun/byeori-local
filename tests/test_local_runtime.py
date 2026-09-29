@@ -24,6 +24,14 @@ class Model:
     context = 32768
     output = 4096
 
+    @property
+    def input_budget(self):
+        return self.context - self.output - 512
+
+    def fits(self, system, prompt):
+        from byeori.local.llm import estimate_tokens
+        return estimate_tokens(system + prompt) <= self.input_budget
+
     def __init__(self):
         self.answer = "\n\n".join(f"## {heading}\n\nThe cohort included 42 samples. [P0001]" for heading in HEADINGS)
         self.calls = 0
@@ -136,8 +144,8 @@ def test_context_overflow_rejected_before_network():
     def handler(request):
         pytest.fail("oversized input must not reach the server")
     backend = OllamaBackend("test", context=2048, output=128, transport=httpx.MockTransport(handler))
-    with pytest.raises(ModelError, match="No text was truncated"):
-        backend.generate("system", "x" * 2048)
+    with pytest.raises(ModelError, match="Nothing was truncated"):
+        backend.generate("system", "x" * 20000)
 
 
 def test_mcp_tools_use_local_service(local):

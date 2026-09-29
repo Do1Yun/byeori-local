@@ -49,6 +49,14 @@ class Extractor:
 class Model:
     model, context, output = "test-model", 32768, 4096
 
+    @property
+    def input_budget(self):
+        return self.context - self.output - 512
+
+    def fits(self, system, prompt):
+        from byeori.local.llm import estimate_tokens
+        return estimate_tokens(system + prompt) <= self.input_budget
+
     def __init__(self, cite="P0001", trailing="  "):
         # Real models end a heading line with a markdown hard break; qwen3:8b did on the first paper.
         self.answer = "\n\n".join(f"## {heading}{trailing}\n\nThe model reports 28.4 BLEU. [{cite}]"
@@ -263,3 +271,153 @@ def test_a_subheading_the_note_invents_is_left_alone(workspace):
         "## 6. Related Work", "## 6. Related Work\n\n### Prior attention mechanisms")
     service.process(paper_id)
     assert "### Prior attention mechanisms" in service.store.note(paper_id)["text"]
+
+
+# --- R06: the input budget, and a paper that does not fit one pass ------------------------
+
+def long_tei(paragraphs, chars=400):
+    body = "".join(f"<div><head>Section {i}</head><p>{'word ' * (chars // 5)}number {i}.</p></div>"
+                   for i in range(1, paragraphs + 1))
+    return f'<TEI><text><body>{body}</body></text></TEI>'.encode()
+
+
+class PartsModel:
+    """A window too small for the paper: digests come back carrying the IDs they were shown."""
+
+    model = "test-model"
+
+    def __init__(self, context=4096, output=1024):
+        self.context, self.output = context, output
+        self.systems = []
+
+    @property
+    def input_budget(self):
+        return self.context - self.output - 512
+
+    def fits(self, system, prompt):
+        from byeori.local.llm import estimate_tokens
+        return estimate_tokens(system + prompt) <= self.input_budget
+
+    def generate(self, system, prompt):
+        self.systems.append(system)
+        shown = re.findall(r"\[(P\d+)\]", prompt)
+        if system.startswith("Digest one part") or system.startswith("Merge these digests"):
+            return Generation("- a reported value " + " ".join(f"[{i}]" for i in shown),
+                              self.model, 100, 50, "stop")
+        return Generation("\n\n".join(f"## {heading}\n\nA reported value. [{shown[0]}]"
+                                      for heading in HEADINGS), self.model, 100, 200, "stop")
+
+
+def test_a_paper_the_old_byte_rule_refused_now_fits_the_default_context():
+    """The real paper measured 33,403 characters of extracted text and 8,567 prompt tokens."""
+    from byeori.local.llm import OllamaBackend, estimate_tokens
+    from byeori.local.service import NOTE_SYSTEM
+    backend = OllamaBackend("test-model")
+    assert backend.fits(NOTE_SYSTEM, "word " * 6680)
+    assert estimate_tokens("word " * 6680) < 12000
+
+
+def test_a_long_paper_is_written_part_by_part_with_every_block_presented(workspace):
+    store, paper_id, _ = workspace
+    service = LocalService(store, PartsModel(), Extractor(long_tei(20)))
+    result = service.process(paper_id)
+    coverage = result["coverage"]
+    assert coverage["path"] == "chunked" and coverage["parts"] > 1
+    assert coverage["blocks_presented"] == coverage["blocks_total"] == 20, \
+        "every extracted block must reach the model in exactly one part"
+    assert coverage["blocks_cited_in_digests"] == 20
+    assert sum(s.startswith("Digest one part") for s in service.backend.systems) == coverage["parts"]
+    note = store.note(paper_id)["text"]
+    assert 'generation_path: "chunked"' in note and 'blocks_presented: "20/20"' in note
+
+
+def test_each_part_of_a_long_paper_leaves_its_own_digest(workspace):
+    store, paper_id, _ = workspace
+    service = LocalService(store, PartsModel(), Extractor(long_tei(20)))
+    result = service.process(paper_id)
+    digests = sorted(store.path(f"runs/{result['job_id']}").glob("digest-*.md"))
+    assert len(digests) == result["coverage"]["parts"]
+    assert all(digest.read_text().startswith("- a reported value") for digest in digests)
+    receipt = json.loads(store.path(f"runs/{result['job_id']}/receipt.json").read_text())
+    assert len(receipt["generations"]) == result["coverage"]["parts"] + 1
+
+
+def test_no_part_is_larger_than_the_model_can_answer(workspace):
+    """The first real chunked run cut a digest off: a part must fit the reply, not just the window."""
+    store, paper_id, _ = workspace
+    service = LocalService(store, PartsModel(), Extractor(long_tei(20)))
+    coverage = service.process(paper_id)["coverage"]
+    from byeori.local.service import DIGEST_FIXED_OUTPUT, PROSE_OUTPUT_PER_TOKEN
+    writable = (service.backend.output - DIGEST_FIXED_OUTPUT) / PROSE_OUTPUT_PER_TOKEN
+    assert coverage["largest_part_tokens"] <= writable
+    assert coverage["blocks_presented"] == coverage["blocks_total"]
+
+
+def test_a_single_block_too_large_for_the_window_is_named(workspace):
+    store, paper_id, _ = workspace
+    service = LocalService(store, PartsModel(), Extractor(long_tei(3, chars=6000)))
+    with pytest.raises(RuntimeError, match="Block P0001 needs about"):
+        service.process(paper_id)
+    assert store.jobs()[0]["stage"] == "generate"
+
+
+def test_a_prompt_the_server_may_have_truncated_is_not_published():
+    """Ollama answers a prompt longer than num_ctx by cutting it and reporting no error."""
+    import httpx
+    from byeori.local.llm import ModelError, OllamaBackend
+    served = httpx.Response(200, json={"done": True, "done_reason": "stop", "model": "test-model",
+                                       "message": {"content": "## One-line Summary"},
+                                       "prompt_eval_count": 500, "eval_count": 20})
+    backend = OllamaBackend("test-model", transport=httpx.MockTransport(lambda request: served))
+    with pytest.raises(ModelError, match="may have been truncated"):
+        backend.generate("system", "word " * 4000)
+
+
+class LongDigestModel(PartsModel):
+    """Digests nearly as long as their parts, which is what no window can then hold at once.
+
+    Measured here, digesting a paper's parts compresses to about 0.54 of it, but merging those
+    digests into fewer expands them: 1.76 output tokens per input token for two, 1.22 for four.
+    So a paper whose digests do not fit one pass has no round that would make them fit.
+    """
+
+    FIRST = 0.95
+
+    def generate(self, system, prompt):
+        from byeori.local.llm import estimate_tokens
+        self.systems.append(system)
+        shown = list(dict.fromkeys(re.findall(r"\[(P\d+)\]", prompt)))
+        if system.startswith("Digest one part"):
+            labels = " ".join(f"[{block_id}]" for block_id in shown)
+            target = int(estimate_tokens(prompt) * self.FIRST)
+            filler = "value " * max(1, (target - estimate_tokens(labels)) // 2)
+            return Generation(f"- {labels} {filler}", self.model, 100, 50, "stop")
+        return Generation("\n\n".join(f"## {heading}\n\nA reported value. [{shown[0]}]"
+                                      for heading in HEADINGS), self.model, 100, 200, "stop")
+
+
+def test_digests_too_large_for_one_note_pass_name_the_window_they_need(workspace):
+    """Nothing is written from part of the evidence: the paper is refused with what it needs."""
+    store, paper_id, _ = workspace
+    service = LocalService(store, LongDigestModel(16384, 4096), Extractor(long_tei(300)))
+    with pytest.raises(RuntimeError, match=r"needs a context of about \d+ tokens"):
+        service.process(paper_id)
+    assert "nothing was truncated" in service.store.jobs()[0]["error"]
+    assert service.store.integrity_problems() == []
+    with pytest.raises(ValueError, match="no published"):
+        store.note(paper_id)
+
+
+# Character-class counts of two prompts this workspace sent to qwen3:8b, with the prompt token
+# count the server reported for each: the whole paper in one pass, and the part holding Tables
+# 2 to 4. An estimate below the real count is what lets a paper be silently truncated.
+MEASURED_PROMPTS = [(25922, 1245, 5764, 1663, 8567), (2049, 579, 1008, 527, 1948)]
+
+
+@pytest.mark.parametrize("letters,digits,spaces,punctuation,reported", MEASURED_PROMPTS)
+def test_the_token_estimate_stays_above_what_the_model_reported(letters, digits, spaces,
+                                                                punctuation, reported):
+    from byeori.local.llm import estimate_tokens
+    text = "a" * letters + "1" * digits + " " * spaces + "|" * punctuation
+    assert estimate_tokens(text) >= reported
+    assert estimate_tokens(text) <= reported * 2, "this much headroom would split papers that fit"
