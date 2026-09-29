@@ -102,23 +102,31 @@ def resolve(xml: bytes, stem: str, blocks, *, lookup):
 
 
 def merged(extracted, resolved):
-    """The extraction's reading, corrected where an agreed record knows better.
+    """The extraction's reading, with the gaps an agreed record can fill.
 
-    The authority decides the year, the journal and the DOI, because that is what it is for and
-    what the extraction is worst at; the title stays as printed unless the PDF printed none.
-    Both readings are kept, so a disagreement is visible rather than lost.
+    The authority fills what the page did not print, which is the case that matters: the
+    lightweight extractor leaves the date empty on real journal PDFs, and a note with no year
+    cannot be placed in the sequence of work it belongs to. It does not overrule what the page did
+    print, because it is not reliably better: asked about "Attention is all you need" OpenAlex
+    answered 2025, and about Bahdanau 2014, the arXiv record rather than the conference paper.
+    A disagreement is recorded for a person to settle, never resolved by this code.
     """
     if resolved.get("state") != "found":
         return dict(extracted, metadata_source="extraction", work_id=None)
-    merged_fields = dict(extracted)
+    fields, disagreements = dict(extracted), {}
     for field in ("year", "journal", "doi"):
-        if resolved.get(field):
-            merged_fields[field] = str(resolved[field])
-    if not merged_fields.get("title"):
-        merged_fields["title"] = resolved.get("title") or ""
-    if not merged_fields.get("authors") and resolved.get("authors"):
-        merged_fields["authors"] = [{"surname": "", "forenames": "", "name": name}
-                                    for name in resolved["authors"]]
-    return merged_fields | {"metadata_source": "openalex", "work_id": resolved.get("work_id"),
-                            "extracted_year": extracted.get("year", ""),
-                            "extracted_journal": extracted.get("journal", "")}
+        value = resolved.get(field)
+        if not value:
+            continue
+        if not fields.get(field):
+            fields[field] = str(value)
+        elif str(fields[field]).strip().lower() != str(value).strip().lower():
+            disagreements[field] = str(value)
+    if not fields.get("title"):
+        fields["title"] = resolved.get("title") or ""
+    if not fields.get("authors") and resolved.get("authors"):
+        fields["authors"] = [{"surname": "", "forenames": "", "name": name}
+                             for name in resolved["authors"]]
+    return fields | {"metadata_source": "openalex", "work_id": resolved.get("work_id")} \
+        | {f"openalex_{field}": value for field, value in disagreements.items()} \
+        | ({"metadata_disagreement": ", ".join(sorted(disagreements))} if disagreements else {})

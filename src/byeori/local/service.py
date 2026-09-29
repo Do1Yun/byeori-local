@@ -517,9 +517,11 @@ class LocalService:
                      "extraction_path": f"{prefix}/document.json"}
             if metadata.get("journal"):
                 front["journal"] = metadata["journal"]
-            # A disagreement between the page and the authority is kept, not resolved away.
-            for field in ("extracted_year", "extracted_journal"):
-                if metadata.get(field) and metadata[field] != metadata.get(field[10:]):
+            # A disagreement between the page and the authority is recorded for a person to
+            # settle; this code does not pick a winner.
+            for field in ("openalex_year", "openalex_journal", "openalex_doi",
+                          "metadata_disagreement"):
+                if metadata.get(field):
                     front[field] = metadata[field]
             page = "---\n" + "\n".join(f"{key}: {json.dumps(value, ensure_ascii=False)}"
                                        for key, value in front.items()) + "\n---\n\n"
@@ -586,7 +588,9 @@ class LocalService:
         paper = self.store.paper(paper_id)
         note = self.store.note(paper_id)
         fields, body = parse_frontmatter(note["text"])
-        tei = self.store.path(f"runs/{note['job_id']}/grobid.tei.xml").read_bytes()
+        # Beside the extraction this note was written from, not beside the job that published it:
+        # a metadata revision has a job of its own and no extraction folder.
+        tei = self.store.path(str(Path(note["extraction_path"]).parent / "grobid.tei.xml")).read_bytes()
         document = json.loads(self.store.path(note["extraction_path"]).read_text(encoding="utf-8"))
         extracted = parse_metadata(tei)
         found = resolve(tei, paper.get("stem") or document_stem(extracted, paper["title"]),
@@ -595,6 +599,9 @@ class LocalService:
         changes = {"year": str(metadata.get("year") or ""), "journal": metadata.get("journal") or "",
                    "doi": metadata.get("doi") or "", "work_ids": metadata.get("work_id") or "",
                    "metadata_source": metadata.get("metadata_source", "extraction")}
+        for field in ("openalex_year", "openalex_journal", "openalex_doi", "metadata_disagreement"):
+            if metadata.get(field):
+                changes[field] = metadata[field]
         stem = self._identity(paper, metadata)
         if stem == paper.get("stem") and all(fields.get(key) == value for key, value in changes.items()):
             return {"paper_id": paper_id, "stem": stem, "changed": False,

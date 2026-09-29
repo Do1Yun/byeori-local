@@ -930,14 +930,15 @@ def test_a_lookup_that_cannot_answer_never_blocks_a_note(workspace):
     assert 'metadata_source: "extraction"' in store.note(paper_id)["text"]
 
 
-def test_the_authority_corrects_a_year_the_page_misprinted(workspace):
-    """GROBID read an arXiv stamp of 2023 as the publication year of a 2017 paper."""
+def test_a_year_the_page_printed_is_not_overruled_but_the_disagreement_is_recorded(workspace):
+    """OpenAlex answered 2025 for a 2017 paper and 2014 for a paper published in 2015."""
     store, paper_id, _ = workspace
-    service = LocalService(store, Model(), Extractor(HEADED_TEI), lookup=lookup_for([dict(WORK, publication_year=2019)]))
+    service = LocalService(store, Model(), Extractor(HEADED_TEI),
+                           lookup=lookup_for([dict(WORK, publication_year=2019)]))
     service.process(paper_id)
     note = store.note(paper_id)["text"]
-    assert 'year: "2019"' in note
-    assert 'extracted_year: "2021"' in note, "what the page said is kept, not resolved away"
+    assert 'year: "2021"' in note, "the page printed 2021 and keeps it"
+    assert 'openalex_year: "2019"' in note and 'metadata_disagreement: "year"' in note
 
 
 def test_a_year_learned_later_moves_the_paper_and_leaves_no_stale_entry(workspace):
@@ -982,6 +983,17 @@ def test_settling_metadata_twice_changes_nothing_the_second_time(workspace):
     service = LocalService(store, Model(), Extractor(NO_YEAR_TEI), lookup=lookup_for([WORK]))
     service.process(paper_id)
     assert service.refresh_metadata(paper_id)["changed"] is False
+
+
+def test_metadata_can_be_settled_again_after_it_has_already_moved_a_paper(workspace):
+    """A metadata revision has a job of its own and no extraction beside it."""
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(NO_YEAR_TEI))
+    service.process(paper_id)
+    service.lookup = lookup_for([WORK])
+    assert service.refresh_metadata(paper_id)["changed"] is True
+    assert service.refresh_metadata(paper_id)["changed"] is False
+    assert store.integrity_problems() == []
 
 
 def test_an_earlier_revision_still_reads_after_the_paper_moves(workspace):
