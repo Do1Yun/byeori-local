@@ -301,6 +301,12 @@ class LocalStore:
             raise ValueError("Unknown job ID")
         return rows[0]
 
+    def set_stage(self, job_id, stage):
+        """Where a running job has got to. A paper can take half an hour; a reader should see it."""
+        with self.db() as db:
+            db.execute("UPDATE jobs SET stage=? WHERE job_id=? AND status='running'",
+                       (stage, job_id))
+
     def finish(self, job_id, status, result=None, error=None, stage=None):
         if status not in JOB_STATUSES:
             raise ValueError(f"Job status must be one of {', '.join(JOB_STATUSES)}")

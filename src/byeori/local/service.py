@@ -349,14 +349,69 @@ class LocalService:
         self.store, self.backend = store, backend
         self.extractor = extractor or GrobidExtractor()
 
+    INBOX = "inbox"
+
+    def inbox(self):
+        """The folder a person drops PDFs into; intake registers whatever is in it."""
+        folder = self.store.path(self.INBOX)
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder
+
+    def intake(self, path: Path, title=None):
+        """Register one PDF or every PDF in a folder. One unreadable file does not stop the rest.
+
+        Registering copies the original into the workspace and never moves or changes the file it
+        read, so a folder can be dropped in twice: the second pass reports duplicates by hash.
+        """
+        path = path.expanduser()
+        if path.is_dir():
+            files = sorted(item for item in path.rglob("*.pdf") if item.is_file())
+        elif path.exists():
+            files = [path]
+        else:
+            raise ValueError(f"No such file or folder: {path}")
+        papers, duplicates, failed = [], [], []
+        for pdf in files:
+            try:
+                paper = self.store.add(pdf, title if len(files) == 1 else None)
+            except (ValueError, OSError) as exc:
+                failed.append({"file": pdf.name, "error": str(exc)})
+                continue
+            (duplicates if paper["duplicate"] else papers).append(
+                {"file": pdf.name, "paper_id": paper["paper_id"], "title": paper["title"]})
+        return {"folder": str(path), "files": len(files), "registered": len(papers),
+                "duplicate": len(duplicates), "failed": len(failed),
+                "papers": papers, "duplicates": duplicates, "errors": failed}
+
+    def pending(self):
+        """Papers with no published note: newly registered ones, and ones whose job failed."""
+        return [paper for paper in self.store.papers() if not paper["note_path"]]
+
+    def process_all(self):
+        """Every pending paper, under one worker lock. A paper that fails does not stop the batch."""
+        with worker_lock(self.store.root):
+            self._sweep_interrupted()
+            results = []
+            for paper in self.pending():
+                try:
+                    results.append(self._process(paper["paper_id"]))
+                except RuntimeError as exc:
+                    results.append({"paper_id": paper["paper_id"], "title": paper["title"],
+                                    "status": "failed", "error": str(exc)})
+            return {"processed": sum(r.get("status") == "succeeded" for r in results),
+                    "failed": sum(r.get("status") == "failed" for r in results), "papers": results}
+
+    def _sweep_interrupted(self):
+        with self.store.db() as db:
+            # Question jobs run on their own thread and are not this worker's to interrupt.
+            db.execute("UPDATE jobs SET status='interrupted', finished_at=?, error=? "
+                       "WHERE status='running' AND (kind IS NULL OR kind='note')",
+                       (now(), "Worker stopped before completion; rerun process to retry"))
+
     def process(self, paper_id):
         with worker_lock(self.store.root):
             # The OS lock proves no other processing worker remains alive in this workspace.
-            with self.store.db() as db:
-                # Question jobs run on their own thread and are not this worker's to interrupt.
-                db.execute("UPDATE jobs SET status='interrupted', finished_at=?, error=? "
-                           "WHERE status='running' AND (kind IS NULL OR kind='note')",
-                           (now(), "Worker stopped before completion; rerun process to retry"))
+            self._sweep_interrupted()
             return self._process(paper_id)
 
     def _process(self, paper_id):
@@ -369,7 +424,7 @@ class LocalService:
                                "context": self.backend.context, "max_output": self.backend.output,
                                "grobid_url": getattr(self.extractor, "url", None)}}
         try:
-            record["stage"] = "extract"
+            self._stage(job_id, record, "extract")
             pdf = self.store.path(paper["pdf_path"]).read_bytes()
             if digest(pdf) != paper_id:
                 raise ValueError("Original PDF hash changed; refusing to process")
@@ -391,21 +446,21 @@ class LocalService:
             record["extraction"] = {"id": extraction_id, "status": status, "blocks": len(blocks),
                                     "path": f"{prefix}/document.json"}
 
-            record["stage"] = "generate"
+            self._stage(job_id, record, "generate")
             prompt = format_blocks(blocks)
             record["prompt_sha256"] = digest(prompt.encode("utf-8"))
             record["prompt_bytes"] = len(prompt.encode("utf-8"))
             record["prompt_tokens_estimated"] = estimate_tokens(NOTE_SYSTEM + prompt + WRITE_NOW)
-            result = self._write(blocks, prefix, record)
+            result = self._write(blocks, prefix, record, job_id)
             self.store.write_new(f"{prefix}/candidate.md", result.text.encode())
             record["generation"] = result.receipt()
 
-            record["stage"] = "validate"
+            self._stage(job_id, record, "validate")
             text = normalize_note(result.text)
             validation_level = validate_note(text, blocks)
             record["validation_level"] = validation_level
 
-            record["stage"] = "publish"
+            self._stage(job_id, record, "publish")
             coverage = record["coverage"]
             # The wiki's frontmatter schema, filled from the extraction rather than from a
             # metadata service, plus what only this runtime knows about how the note was written.
@@ -469,7 +524,11 @@ class LocalService:
             suffix += 1
             candidate = f"{stem}-{suffix}"
 
-    def _write(self, blocks, prefix, record):
+    def _stage(self, job_id, record, stage):
+        record["stage"] = stage
+        self.store.set_stage(job_id, stage)
+
+    def _write(self, blocks, prefix, record, job_id):
         """One pass when the paper fits the window, otherwise a digest per part and then the note.
 
         Ollama truncates an oversized prompt without saying so, so a paper that does not fit is
@@ -498,6 +557,7 @@ class LocalService:
         digests = []
         for index, part in enumerate(parts, 1):
             label = f"Part {index} of {len(parts)}, {part[0]['id']} to {part[-1]['id']}"
+            self._stage(job_id, record, f"generate part {index}/{len(parts)}")
             text = digest(DIGEST_SYSTEM, format_blocks(part), label)
             self.store.write_new(f"{prefix}/digest-{index:02d}.md", text.encode())
             digests.append(f"### {label}\n{text}")
@@ -514,6 +574,7 @@ class LocalService:
                              f"{estimate_tokens(combined)} tokens and the input budget is "
                              f"{self.backend.input_budget}. Writing this paper's note needs a "
                              f"context of about {needed} tokens; nothing was truncated.")
+        self._stage(job_id, record, f"generate note from {len(parts)} digests")
         result = self.backend.generate(NOTE_FROM_DIGESTS_SYSTEM, combined + WRITE_NOW)
         record["generations"] = receipts + [result.receipt()]
         record["coverage"] = {"path": "chunked", "parts": len(parts), "blocks_total": len(blocks),

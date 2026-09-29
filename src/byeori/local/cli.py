@@ -46,11 +46,15 @@ def main(argv=None):
     sub.add_parser("init", help="Create the workspace named by --data-dir or BYEORI_LOCAL_DATA")
     sub.add_parser("doctor")
     sub.add_parser("check", help="Report disagreements between notes, search and job status")
-    add = sub.add_parser("add")
-    add.add_argument("pdf", type=Path)
-    add.add_argument("--title")
+    add = sub.add_parser("add", help="Register a PDF, or every PDF in a folder")
+    add.add_argument("path", type=Path, help="A PDF file or a folder of them")
+    add.add_argument("--title", help="Only when registering a single file")
+    intake = sub.add_parser("intake", help="Register everything dropped in the workspace inbox")
+    intake.add_argument("--process", action="store_true", help="Then write a note for each")
     process = sub.add_parser("process")
-    process.add_argument("paper_id")
+    process.add_argument("paper_id", nargs="?")
+    process.add_argument("--all", action="store_true",
+                         help="Every registered paper that has no note yet")
     sub.add_parser("list")
     search = sub.add_parser("search")
     search.add_argument("query")
@@ -83,8 +87,17 @@ def main(argv=None):
                 problems = service.store.integrity_problems()
                 print(json.dumps({"problems": problems}, ensure_ascii=False, indent=2))
                 return 1 if problems else 0
-            case "add": result = service.store.add(args.pdf, args.title)
-            case "process": result = service.process(args.paper_id)
+            case "add": result = service.intake(args.path, args.title)
+            case "intake":
+                folder = service.inbox()
+                result = service.intake(folder)
+                result["drop_pdfs_here"] = str(folder)
+                if args.process:
+                    result["processing"] = service.process_all()
+            case "process":
+                if args.all == bool(args.paper_id):
+                    raise ValueError("Give a paper ID or --all, not both")
+                result = service.process_all() if args.all else service.process(args.paper_id)
             case "list": result = service.store.papers()
             case "search": result = service.store.search(args.query)
             case "read": result = service.read(args.paper_id, start=args.start, revision=args.revision)

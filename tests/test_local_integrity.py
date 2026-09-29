@@ -767,3 +767,100 @@ def test_every_note_an_answer_cites_is_returned_as_a_citation(workspace, tmp_pat
     answer = service.ask("What do they report?")
     assert [citation["label"] for citation in answer["citations"]] == ["E1", "E2"]
     assert {citation["paper_id"] for citation in answer["citations"]} == {first_id, second_id}
+
+
+# --- a folder of PDFs, registered and processed in one go ---------------------------------
+
+def test_a_folder_of_pdfs_is_registered_in_one_go(local, tmp_path):
+    service, _, _ = local
+    folder = tmp_path / "drop"
+    (folder / "nested").mkdir(parents=True)
+    (folder / "one.pdf").write_bytes(b"%PDF-1.7\nfirst paper")
+    (folder / "nested" / "two.pdf").write_bytes(b"%PDF-1.7\nsecond paper")
+    (folder / "notes.txt").write_text("not a paper")
+
+    result = service.intake(folder)
+    assert result["files"] == 2 and result["registered"] == 2 and result["failed"] == 0
+    assert {paper["file"] for paper in result["papers"]} == {"one.pdf", "two.pdf"}
+
+
+def test_dropping_the_same_folder_again_registers_nothing_twice(local, tmp_path):
+    service, _, _ = local
+    folder = tmp_path / "drop"
+    folder.mkdir()
+    (folder / "one.pdf").write_bytes(b"%PDF-1.7\nfirst paper")
+    service.intake(folder)
+    again = service.intake(folder)
+    assert again["registered"] == 0 and again["duplicate"] == 1
+
+
+def test_one_unreadable_file_does_not_stop_the_others(local, tmp_path):
+    service, _, _ = local
+    folder = tmp_path / "drop"
+    folder.mkdir()
+    (folder / "broken.pdf").write_bytes(b"not a PDF at all")
+    (folder / "good.pdf").write_bytes(b"%PDF-1.7\na real one")
+    result = service.intake(folder)
+    assert result["registered"] == 1 and result["failed"] == 1
+    assert result["errors"][0]["file"] == "broken.pdf" and "not a PDF" in result["errors"][0]["error"]
+
+
+def test_the_inbox_is_a_folder_inside_the_workspace(local):
+    service, _, _ = local
+    inbox = service.inbox()
+    assert inbox.is_dir() and inbox.parent == service.store.root
+
+
+def test_processing_every_pending_paper_leaves_none_without_a_note(local, tmp_path):
+    service, first_id, _ = local
+    folder = tmp_path / "drop"
+    folder.mkdir()
+    (folder / "one.pdf").write_bytes(b"%PDF-1.7\nfirst paper")
+    (folder / "two.pdf").write_bytes(b"%PDF-1.7\nsecond paper")
+    service.intake(folder)
+
+    assert len(service.pending()) == 3
+    result = service.process_all()
+    assert result["processed"] == 3 and result["failed"] == 0
+    assert service.pending() == []
+    assert len(service.store.search("BLEU")) == 3
+
+
+def test_a_paper_that_fails_does_not_stop_the_batch(local, tmp_path):
+    service, first_id, _ = local
+    folder = tmp_path / "drop"
+    folder.mkdir()
+    (folder / "one.pdf").write_bytes(b"%PDF-1.7\nfirst paper")
+    service.intake(folder)
+
+    failing = {service.store.papers()[0]["paper_id"]}
+    original = service.extractor.extract
+
+    def extract(pdf):
+        if b"first paper" in pdf:
+            raise ValueError("Extraction contains no body text")
+        return original(pdf)
+
+    service.extractor.extract = extract
+    result = service.process_all()
+    assert result["processed"] == 1 and result["failed"] == 1
+    assert len(service.pending()) == 1, "the paper that failed is still pending, the other is not"
+    assert service.store.integrity_problems() == []
+
+
+def test_a_running_job_says_which_stage_it_is_in(workspace):
+    """A domain paper took 20 minutes here, and its job still reported the stage it started in."""
+    store, paper_id, _ = workspace
+    seen = []
+
+    class Watching(PartsModel):
+        def generate(self, system, prompt):
+            seen.append(store.jobs()[0]["stage"])
+            return super().generate(system, prompt)
+
+    service = LocalService(store, Watching(), Extractor(long_tei(20)))
+    result = service.process(paper_id)
+    assert any(stage.startswith("generate part 1/") for stage in seen), seen
+    assert any(stage.startswith("generate part 2/") for stage in seen), seen
+    assert seen[-1].startswith("generate note from")
+    assert store.jobs(result["job_id"])[0]["stage"] == "publish"
