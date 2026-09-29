@@ -27,6 +27,8 @@
 | 토큰 예산 추정과 입력 잘림 감지 | 실서비스 검증 (실측 2지점 기준) |
 | 필요한 원문 재독(생성 중 자동) | 미구현 |
 | 중간 단계부터의 작업 재개 | 미구현 |
+| TEI 헤더 메타데이터 추출(제목·저자·연도·DOI·학술지) | 실서비스 검증 |
+| 기존 위키와 같은 문서 식별자·프론트매터·색인 컬럼 | mock 검증 (upstream 검증기·concept 추출기 직접 호출) |
 | Concept·Overview 생성, AWS 저장소 연결 | 미구현 |
 | catalog 페이지네이션·색인 재구축·백업·복원 | 미구현 |
 | schema migration | 실서비스 검증 (노트 3개가 있는 워크스페이스를 제자리에서 2→3으로 올림) |
@@ -79,7 +81,13 @@ byeori-local check
 
 전역 옵션(`--data-dir`, `--model`, `--context`)은 하위 명령 앞에 둡니다. PDF는 SHA-256으로 중복 확인하며 원본을 보존합니다. DOI가 없어도 등록할 수 있습니다. `process`는 GROBID 추출과 Ollama 호출을 동기 실행하므로 수 분 걸릴 수 있습니다.
 
-작업별 TEI·문단 JSON·모델 후보·실행 기록은 `runs/<job_id>/`에 남습니다. `receipt.json`은 성공·실패 모두 남으며 도달한 단계, GROBID가 스스로 기록한 버전, prompt digest, 설정을 담습니다. 게시된 노트는 `wiki/sources/<paper_id>/<revision_id>.md`에 버전별로 보존하고, `note_versions`가 각 revision의 sha256과 그 노트가 읽은 추출을 기록합니다. catalog는 논문당 하나의 활성 노트를 가리키며 검색도 그 revision만 사용합니다.
+논문은 저장 키(PDF의 SHA-256)와 **문서 식별자**를 따로 가집니다. 문서 식별자는 기존 byeori와 같은 `{첫 저자}-{연도}-{제목 단어}` 형식(예: `zhou-2021-de-novo-variants-in-autism-cohorts`)이며, 추출한 TEI 헤더에서 만듭니다. 검색 결과의 `doc_id`와 노트 경로가 이 식별자이고, `byeori.identity.split_stem`이 그대로 읽습니다. 같은 식별자가 이미 있으면 뒤에 번호를 붙입니다. 한 논문의 식별자는 첫 게시 때 정해지고 노트를 다시 써도 바뀌지 않습니다.
+
+메타데이터는 GROBID가 PDF에서 읽은 그대로 기록하며 교정하지 않습니다. 실제로 이 저장소의 시험 논문에서 GROBID는 소속 줄을 저자로, arXiv 도장 날짜를 출판 연도로 읽었습니다. 프론트매터의 `text_extractor`·`text_extractor_version`이 어느 추출기가 읽었는지 밝힙니다.
+
+노트의 Glossary는 `- **용어**: 정의` 형식이어야 하며, byeori의 concept 추출기가 읽을 수 있는 항목이 3개 미만이면 게시하지 않습니다. 이 형식이 아니면 그 노트는 concept 페이지에 아무것도 기여하지 못합니다.
+
+작업별 TEI·문단 JSON·모델 후보·실행 기록은 `runs/<job_id>/`에 남습니다. `receipt.json`은 성공·실패 모두 남으며 도달한 단계, GROBID가 스스로 기록한 버전, prompt digest, 설정을 담습니다. 게시된 노트는 `wiki/sources/<문서 식별자>/<revision_id>.md`에 버전별로 보존하고, `note_versions`가 각 revision의 sha256과 그 노트가 읽은 추출을 기록합니다. catalog는 논문당 하나의 활성 노트를 가리키며 검색도 그 revision만 사용합니다.
 
 노트 파일·검색 색인·활성 포인터·작업 성공은 한 트랜잭션에서 확정됩니다. 따라서 실패로 기록된 작업의 노트가 검색에 노출되는 상태는 생기지 않고, 재생성이 실패하면 이전 노트가 계속 검색에 사용됩니다. 파일은 임시 이름에 쓰고 fsync 후 이름을 바꾸므로 절반만 쓰인 산출물을 읽는 일이 없습니다. 등록이 중간에 끊겨 원본이 일부만 남은 경우 그 파일을 `quarantine/`으로 옮기고 다시 등록합니다: 삭제하지 않습니다.
 

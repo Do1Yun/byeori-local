@@ -36,6 +36,19 @@ TEI = b"""<TEI xmlns="http://www.tei-c.org/ns/1.0">
 NO_ABSTRACT = b'<TEI><text><body><div><head>Results</head><p>The cohort included 42 samples.</p></div></body></text></TEI>'
 
 
+def note_text(citation="P0001", trailing="", level="## "):
+    """A note in the shape the contract asks for, Glossary lines byeori can read included."""
+    sections = []
+    for heading in HEADINGS:
+        body = f"The model reports 28.4 BLEU. [{citation}]"
+        if heading.endswith("Glossary"):
+            body = "\n".join(f"- **Attention head {index}**: one of the parallel attention "
+                             f"functions. [{citation}]" for index in range(1, 4))
+        prefix = "## " if heading == HEADINGS[0] else level
+        sections.append(f"{prefix}{heading}{trailing}\n\n{body}")
+    return "\n\n".join(sections)
+
+
 class Extractor:
     """Stands in for GROBID; the bytes and the parse are the real ones."""
 
@@ -59,8 +72,7 @@ class Model:
 
     def __init__(self, cite="P0001", trailing="  "):
         # Real models end a heading line with a markdown hard break; qwen3:8b did on the first paper.
-        self.answer = "\n\n".join(f"## {heading}{trailing}\n\nThe model reports 28.4 BLEU. [{cite}]"
-                                 for heading in HEADINGS)
+        self.answer = note_text(cite, trailing)
         self.calls = 0
 
     def generate(self, system, prompt):
@@ -253,8 +265,7 @@ def test_a_level_three_heading_is_still_the_same_section(workspace):
     """qwen3:8b wrote '### 2. Key Contributions' on the second real run; the names were right."""
     store, paper_id, _ = workspace
     service = LocalService(store, Model(), Extractor())
-    service.backend.answer = "## One-line Summary  \n\nIt reports 28.4 BLEU. [P0001]\n\n" + "\n\n".join(
-        f"### {heading}\n\nIt reports 28.4 BLEU. [P0001]" for heading in HEADINGS[1:])
+    service.backend.answer = note_text(trailing="  ", level="### ")
     assert service.process(paper_id)["status"] == "succeeded"
     note = service.store.note(paper_id)["text"]
     assert "### 2. Key Contributions" not in note
@@ -304,8 +315,7 @@ class PartsModel:
         if system.startswith("Digest one part") or system.startswith("Merge these digests"):
             return Generation("- a reported value " + " ".join(f"[{i}]" for i in shown),
                               self.model, 100, 50, "stop")
-        return Generation("\n\n".join(f"## {heading}\n\nA reported value. [{shown[0]}]"
-                                      for heading in HEADINGS), self.model, 100, 200, "stop")
+        return Generation(note_text(shown[0]), self.model, 100, 200, "stop")
 
 
 def test_a_paper_the_old_byte_rule_refused_now_fits_the_default_context():
@@ -392,8 +402,7 @@ class LongDigestModel(PartsModel):
             target = int(estimate_tokens(prompt) * self.FIRST)
             filler = "value " * max(1, (target - estimate_tokens(labels)) // 2)
             return Generation(f"- {labels} {filler}", self.model, 100, 50, "stop")
-        return Generation("\n\n".join(f"## {heading}\n\nA reported value. [{shown[0]}]"
-                                      for heading in HEADINGS), self.model, 100, 200, "stop")
+        return Generation(note_text(shown[0]), self.model, 100, 200, "stop")
 
 
 def test_digests_too_large_for_one_note_pass_name_the_window_they_need(workspace):
@@ -436,8 +445,7 @@ class SlowModel(PartsModel):
 
     def generate(self, system, prompt):
         if "Evidence Note" in system or system.startswith("Digest"):
-            return Generation("\n\n".join(f"## {heading}\n\nA value. [P0001]" for heading in HEADINGS),
-                              self.model, 100, 200, "stop")
+            return Generation(note_text(), self.model, 100, 200, "stop")
         self.started.set()
         assert self.release.wait(5), "the model was never released"
         return Generation(self.answer, self.model, 100, 200, "stop")
@@ -586,3 +594,139 @@ def test_a_question_this_process_still_owns_is_left_alone(answered):
     assert service.store.job(job_id)["status"] == "running"
     service.backend.release.set()
     assert jobs.wait(job_id, timeout=5)["status"] == "succeeded"
+
+
+# --- R10: a note byeori's own wiki recognises ---------------------------------------------
+
+HEADED_TEI = b"""<TEI xmlns="http://www.tei-c.org/ns/1.0">
+<teiHeader><fileDesc>
+<titleStmt><title level="a" type="main">De novo variants in autism cohorts</title></titleStmt>
+<publicationStmt><date type="published" when="2021-04-16">16 April 2021</date></publicationStmt>
+<sourceDesc><biblStruct>
+<analytic>
+<author><persName><forename type="first">Mei</forename><surname>Zhou</surname></persName></author>
+<author><persName><forename type="first">Ada</forename><surname>Okafor</surname></persName></author>
+<idno type="DOI">10.1000/example.2021.4567</idno>
+</analytic>
+<monogr><title level="j">Nature Genetics</title></monogr>
+</biblStruct></sourceDesc>
+</fileDesc>
+<encodingDesc><appInfo><application version="0.9.1" ident="GROBID"/></appInfo></encodingDesc>
+<profileDesc><abstract><div><p>We sequenced 1,204 probands.</p></div></abstract></profileDesc>
+</teiHeader>
+<text><body><div><head>Results</head><p>We found 42 de novo variants in SCN2A.</p></div></body></text></TEI>"""
+
+
+@pytest.fixture
+def headed(workspace):
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(HEADED_TEI))
+    return service, paper_id, service.process(paper_id)
+
+
+def test_a_published_note_passes_byeoris_own_page_validation(headed):
+    from byeori.validation import page_errors
+    service, paper_id, result = headed
+    note = service.store.note(paper_id)["text"]
+    assert page_errors(f"wiki/sources/{result['stem']}.md", note) == []
+
+
+def test_a_published_note_yields_concept_candidates(headed):
+    """A note whose Glossary byeori cannot parse contributes nothing to a concept page."""
+    from byeori.synthesis_terms import glossary_entries
+    service, paper_id, _ = headed
+    entries = glossary_entries(service.store.note(paper_id)["text"])
+    assert len(entries) >= 3 and all(term and definition for term, definition in entries)
+
+
+def test_a_note_without_a_readable_glossary_is_not_published(workspace):
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(HEADED_TEI))
+    service.backend.answer = "\n\n".join(f"## {heading}\n\nA value. [P0001]" for heading in HEADINGS)
+    with pytest.raises(RuntimeError, match="Glossary has 0 entries"):
+        service.process(paper_id)
+
+
+def test_the_document_id_is_the_identity_byeori_reads_elsewhere(headed):
+    from byeori.identity import split_stem
+    service, paper_id, result = headed
+    assert result["stem"] == "zhou-2021-de-novo-variants-in-autism-cohorts"
+    assert split_stem(result["stem"]) == ("zhou", "2021", "de-novo-variants-in-autism-cohorts")
+    assert service.store.paper_for_stem(result["stem"]) == paper_id
+    assert service.store.search("de novo variants")[0]["doc_id"] == result["stem"]
+
+
+def test_the_note_carries_the_metadata_the_extraction_read(headed):
+    service, paper_id, _ = headed
+    note = service.store.note(paper_id)["text"]
+    for line in ('title: "De novo variants in autism cohorts"', 'year: "2021"',
+                 'doi: "10.1000/example.2021.4567"', 'journal: "Nature Genetics"',
+                 'authors: "Mei Zhou, Ada Okafor"', 'text_extractor: "GROBID"',
+                 'text_extractor_version: "0.9.1"'):
+        assert line in note, line
+
+
+def test_the_index_holds_what_a_synthesis_reads(headed):
+    from byeori.wiki_search import RESULT_FIELDS
+    service, paper_id, result = headed
+    with service.store.db() as db:
+        columns = [row["name"] for row in db.execute("PRAGMA table_info(docs)")]
+        row = dict(db.execute("SELECT * FROM docs WHERE doc_id=?", (result["stem"],)).fetchone())
+    assert columns == ["doc_type", "doc_id", "title", "path", "year", "journal", "doi",
+                       "work_ids", "category", "s3_key", "summary"]
+    assert set(RESULT_FIELDS) - {"score", "section"} <= set(columns)
+    assert row["summary"].startswith("The model reports 28.4 BLEU")
+    assert row["year"] == "2021" and row["journal"] == "Nature Genetics"
+
+
+def test_a_paper_keeps_its_identity_when_its_note_is_rewritten(headed):
+    service, paper_id, result = headed
+    service.extractor = Extractor(HEADED_TEI.replace(b"De novo variants in autism cohorts",
+                                                     b"A completely different title"))
+    again = service.process(paper_id)
+    assert again["stem"] == result["stem"], "a rewritten note must not move the document"
+    assert again["revision_id"] != result["revision_id"]
+    hits = service.store.search("BLEU")
+    assert [hit["doc_id"] for hit in hits] == [result["stem"]], "one document, not two"
+
+
+def test_two_papers_that_read_as_the_same_document_get_separate_ids(workspace, tmp_path):
+    store, first_id, _ = workspace
+    LocalService(store, Model(), Extractor(HEADED_TEI)).process(first_id)
+    other = tmp_path / "other.pdf"
+    other.write_bytes(b"%PDF-1.7\na different file with the same title page")
+    second_id = store.add(other, "Cohort study")["paper_id"]
+    second = LocalService(store, Model(), Extractor(HEADED_TEI)).process(second_id)
+    assert second["stem"] == "zhou-2021-de-novo-variants-in-autism-cohorts-2"
+    assert store.paper_for_stem(second["stem"]) == second_id
+    assert store.integrity_problems() == []
+
+
+def test_a_citation_written_in_parentheses_still_names_its_paragraph(workspace):
+    """qwen3:8b cited (P0042) on a paper whose own text is full of [MASK] and [CLS]."""
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(HEADED_TEI))
+    service.backend.answer = note_text().replace("[P0001]", "(P0001)")
+    assert service.process(paper_id)["status"] == "succeeded"
+    note = store.note(paper_id)["text"]
+    assert "(P0001)" not in note and "[P0001]" in note
+
+
+def test_several_paragraphs_cited_in_one_parenthesis_become_separate_citations():
+    from byeori.local.service import normalize_note
+    assert normalize_note("A value (P0042, P0043).") == "A value [P0042][P0043]."
+    assert normalize_note("Written in 2018 (Peters et al., 2018a).") == \
+        "Written in 2018 (Peters et al., 2018a)."
+
+
+def test_a_note_indexed_under_an_earlier_identity_stops_answering_searches(headed):
+    service, paper_id, result = headed
+    with service.store.db() as db:      # what a pre-identity workspace left behind
+        db.execute("INSERT INTO section_map VALUES (?,?,?,?)", (9001, "note", paper_id, "Results"))
+        db.execute("INSERT INTO docs VALUES ('note',?,?,?,?,?,?,?,?,?,?)",
+                   (paper_id, "Retired", "wiki/sources/old.md", "", "", "", "", "other",
+                    "wiki/sources/old.md", ""))
+    assert service.store.integrity_problems(), "the stale row is a problem worth reporting"
+    service.process(paper_id)
+    assert service.store.integrity_problems() == []
+    assert [hit["doc_id"] for hit in service.store.search("BLEU")] == [result["stem"]]

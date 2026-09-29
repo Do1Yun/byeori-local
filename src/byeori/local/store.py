@@ -13,18 +13,22 @@ import uuid
 
 from byeori.wiki_search import search_index
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 JOB_STATUSES = ("queued", "running", "succeeded", "failed", "cancelled", "interrupted")
 TERMINAL_STATUSES = ("succeeded", "failed", "cancelled", "interrupted")
 # Columns added after a workspace may already hold notes, so they are added in place.
 MIGRATIONS = {3: ["ALTER TABLE jobs ADD COLUMN kind TEXT",
                   "ALTER TABLE jobs ADD COLUMN request TEXT",
-                  "ALTER TABLE jobs ADD COLUMN cancel_requested TEXT"]}
+                  "ALTER TABLE jobs ADD COLUMN cancel_requested TEXT"],
+              4: ["ALTER TABLE papers ADD COLUMN stem TEXT",
+                  "ALTER TABLE docs ADD COLUMN work_ids TEXT",
+                  "ALTER TABLE docs ADD COLUMN summary TEXT"]}
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS papers (
     paper_id TEXT PRIMARY KEY, title TEXT NOT NULL, pdf_path TEXT NOT NULL,
-    created_at TEXT NOT NULL);
+    created_at TEXT NOT NULL, stem TEXT);
+CREATE UNIQUE INDEX IF NOT EXISTS papers_stem ON papers (stem);
 CREATE TABLE IF NOT EXISTS jobs (
     job_id TEXT PRIMARY KEY, paper_id TEXT, status TEXT NOT NULL, stage TEXT,
     created_at TEXT NOT NULL, finished_at TEXT, error TEXT, result TEXT,
@@ -41,7 +45,7 @@ CREATE INDEX IF NOT EXISTS note_versions_paper ON note_versions (paper_id, creat
 CREATE TABLE IF NOT EXISTS notes (paper_id TEXT PRIMARY KEY, revision_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS docs (
     doc_type TEXT, doc_id TEXT, title TEXT, path TEXT, year TEXT,
-    journal TEXT, doi TEXT, category TEXT, s3_key TEXT,
+    journal TEXT, doi TEXT, work_ids TEXT, category TEXT, s3_key TEXT, summary TEXT,
     PRIMARY KEY(doc_type, doc_id));
 CREATE VIRTUAL TABLE IF NOT EXISTS sections USING fts5(title, section, content,
     tokenize='porter unicode61');
@@ -95,7 +99,7 @@ class LocalStore:
         self.sweep_orphaned_questions()
 
     @staticmethod
-    def _migrate(db, version):
+    def _migrate(db, version):  # noqa: C901
         """Carry a workspace forward in place. Notes, runs and originals are never rewritten."""
         if version > SCHEMA_VERSION:
             raise ValueError(f"Workspace schema is version {version} and this release reads "
@@ -104,9 +108,9 @@ class LocalStore:
             if step not in MIGRATIONS:
                 raise ValueError(f"No migration to schema version {step}; every file is preserved, "
                                  "so a workspace created by this release can republish from them.")
-            columns = {row["name"] for row in db.execute("PRAGMA table_info(jobs)")}
             for statement in MIGRATIONS[step]:
-                if statement.split()[-2] not in columns:
+                table, column = statement.split()[2], statement.split()[-2]
+                if column not in {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}:
                     db.execute(statement)
         db.execute("UPDATE schema_version SET version=?", (SCHEMA_VERSION,))
 
@@ -203,8 +207,9 @@ class LocalStore:
                 quarantined = self.quarantine(relative)
             if not path.exists():
                 self.write_new(relative, content)
-            row = (paper_id, title or pdf.stem, relative, now())
-            db.execute("INSERT INTO papers VALUES (?,?,?,?)", row)
+            # The stem is the extraction's to give, so it stays empty until the first note.
+            db.execute("INSERT INTO papers(paper_id,title,pdf_path,created_at) VALUES (?,?,?,?)",
+                       (paper_id, title or pdf.stem, relative, now()))
         result = self.paper(paper_id) | {"duplicate": False}
         return result | {"recovered_from": quarantined} if quarantined else result
 
@@ -214,6 +219,12 @@ class LocalStore:
         if row is None:
             raise ValueError("Unknown paper ID")
         return dict(row)
+
+    def paper_for_stem(self, stem):
+        """The stored paper a wiki document id names; search and synthesis speak in stems."""
+        with self.db() as db:
+            row = db.execute("SELECT paper_id FROM papers WHERE stem=?", (stem,)).fetchone()
+        return row["paper_id"] if row else None
 
     def papers(self):
         with self.db() as db:
@@ -326,7 +337,7 @@ class LocalStore:
         return job
 
     def publish(self, paper, job_id, markdown, *, extraction_id, extraction_path,
-                extraction_status, model, validation_level, result):
+                extraction_status, model, validation_level, result, stem, metadata, summary):
         """Write the note, swap the index, move the active pointer and record the job's success.
 
         All four happen in one transaction, so a reader never finds a live note whose job is
@@ -334,28 +345,39 @@ class LocalStore:
         """
         paper_id = paper["paper_id"]
         revision_id = job_id
-        relative = f"wiki/sources/{paper_id}/{revision_id}.md"
+        # The note's own folder is the wiki's document id; the SHA-256 stays the storage key.
+        relative = f"wiki/sources/{stem}/{revision_id}.md"
         body = markdown.encode("utf-8")
         self.write_new(relative, body)
         with self.db() as db:
-            db.execute("DELETE FROM sections WHERE rowid IN "
-                       "(SELECT rowid FROM section_map WHERE doc_type='note' AND doc_id=?)", (paper_id,))
-            db.execute("DELETE FROM section_map WHERE doc_type='note' AND doc_id=?", (paper_id,))
-            db.execute("INSERT OR REPLACE INTO docs VALUES (?,?,?,?,?,?,?,?,?)",
-                       ("note", paper_id, paper["title"], relative, "", "", "", "other", relative))
+            # Both this document id and the paper's storage key: a workspace written before notes
+            # had a document id indexed them under the SHA-256, and leaving those rows would keep
+            # a retired note answering searches.
+            for identity in dict.fromkeys((stem, paper_id)):
+                db.execute("DELETE FROM sections WHERE rowid IN (SELECT rowid FROM section_map "
+                           "WHERE doc_type='note' AND doc_id=?)", (identity,))
+                db.execute("DELETE FROM section_map WHERE doc_type='note' AND doc_id=?", (identity,))
+                db.execute("DELETE FROM docs WHERE doc_type='note' AND doc_id=?", (identity,))
+            db.execute("INSERT OR REPLACE INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                       ("note", stem, metadata.get("title") or paper["title"], relative,
+                        metadata.get("year", ""), metadata.get("journal", ""),
+                        metadata.get("doi", ""), "", "other", relative, summary))
             matches = list(re.finditer(r"^## (.+)$", markdown, re.M))
             for i, match in enumerate(matches):
                 end = matches[i + 1].start() if i + 1 < len(matches) else len(markdown)
                 cursor = db.execute("INSERT INTO sections(title,section,content) VALUES (?,?,?)",
-                                    (paper["title"], match[1], markdown[match.end():end]))
+                                    (metadata.get("title") or paper["title"], match[1],
+                                     markdown[match.end():end]))
                 db.execute("INSERT INTO section_map VALUES (?,?,?,?)",
-                           (cursor.lastrowid, "note", paper_id, match[1]))
+                           (cursor.lastrowid, "note", stem, match[1]))
             db.execute("INSERT INTO note_versions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                        (revision_id, paper_id, job_id, relative, digest(body), extraction_id,
                         extraction_path, extraction_status, model, validation_level, now()))
             db.execute("INSERT OR REPLACE INTO notes VALUES (?,?)", (paper_id, revision_id))
+            db.execute("UPDATE papers SET stem=? WHERE paper_id=? AND (stem IS NULL OR stem=?)",
+                       (stem, paper_id, stem))
             self._record_success(db, job_id, result | {"revision_id": revision_id})
-        return {"path": relative, "revision_id": revision_id}
+        return {"path": relative, "revision_id": revision_id, "stem": stem}
 
     def search(self, query, limit=10):
         with self.db() as db:
@@ -407,9 +429,10 @@ class LocalStore:
                     problems.append(f"revision {row['revision_id']}: note file {row['path']} is missing")
             indexed = {row[0] for row in db.execute("SELECT DISTINCT doc_id FROM section_map "
                                                     "WHERE doc_type='note'")}
-            active = {row[0] for row in db.execute("SELECT paper_id FROM notes")}
-            for paper_id in indexed - active:
-                problems.append(f"{paper_id}: indexed for search without an active note")
-            for paper_id in active - indexed:
-                problems.append(f"{paper_id}: has an active note that search cannot reach")
+            active = {row[0] for row in db.execute(
+                "SELECT p.stem FROM notes n JOIN papers p USING(paper_id) WHERE p.stem IS NOT NULL")}
+            for stem in indexed - active:
+                problems.append(f"{stem}: indexed for search without an active note")
+            for stem in active - indexed:
+                problems.append(f"{stem}: has an active note that search cannot reach")
         return problems

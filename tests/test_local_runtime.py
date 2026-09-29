@@ -33,7 +33,12 @@ class Model:
         return estimate_tokens(system + prompt) <= self.input_budget
 
     def __init__(self):
-        self.answer = "\n\n".join(f"## {heading}\n\nThe cohort included 42 samples. [P0001]" for heading in HEADINGS)
+        self.answer = "\n\n".join(
+            f"## {heading}\n\n" + ("\n".join(f"- **Cohort {index}**: a group of samples. [P0001]"
+                                              for index in range(1, 4))
+                                   if heading.endswith("Glossary")
+                                   else "The cohort included 42 samples. [P0001]")
+            for heading in HEADINGS)
         self.calls = 0
 
     def generate(self, system, prompt):
@@ -55,7 +60,8 @@ def test_pipeline_search_context_and_cited_answer(local):
     service, pid, _ = local
     result = service.process(pid)
     assert result["status"] == "succeeded"
-    assert service.store.search("cohort samples")[0]["doc_id"] == pid
+    # Search answers in the wiki's document id, which is what a synthesis page would cite.
+    assert service.store.search("cohort samples")[0]["doc_id"] == service.store.paper(pid)["stem"]
     note = service.read(pid, max_chars=40)
     assert note["next_start"] == 40
     assert service.context(pid, "P0001")["text"] == "The cohort included 42 samples."
@@ -159,7 +165,7 @@ def test_mcp_tools_use_local_service(local):
             "list_note_revisions", "read_paper_context", "ask_byeori", "cancel_job", "get_job",
             "list_jobs"}
         result = await server.call_tool("search_wiki", {"query": "cohort"})
-        assert pid in str(result)
+        assert service.store.paper(pid)["stem"] in str(result)
     asyncio.run(check())
 
 
@@ -199,5 +205,5 @@ def test_real_stdio_mcp_handshake_and_search(local):
                 await session.initialize()
                 result = await session.call_tool("search_wiki", {"query": "cohort"})
                 assert not result.isError
-                assert pid in str(result.content)
+                assert service.store.paper(pid)["stem"] in str(result.content)
     asyncio.run(run())
