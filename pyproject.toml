@@ -13,6 +13,8 @@ dependencies = [
 ]
 
 [project.scripts]
+byeori-local = "byeori.local.cli:main"
+byeori-local-mcp = "byeori.local.mcp_server:main"
 byeori = "byeori.cli:main"
 byeori-mcp = "byeori.mcp_server:main"
 byeori-lab-mcp = "byeori.lab_mcp_server:main"

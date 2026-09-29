@@ -5,6 +5,10 @@ original papers in S3, one evidence note per paper written from its full text, s
 notes, a search index, and a question service, all with provenance. This file tells a coding
 agent how to work here. It is short on purpose; the documents it points at carry the detail.
 
+## Local LLM fork development
+
+This fork explicitly supports local inference and a separate development workspace through `byeori-local` and `byeori-local-mcp`. The cloud-only boundaries below apply to the original AWS commands, not `src/byeori/local/`. Preserve the original AWS paths and their tests. See [docs/LOCAL-DEVELOPMENT.md](docs/LOCAL-DEVELOPMENT.md). Never silently fall back to a cloud model. Validate full-text provenance and preserve originals in both runtimes.
+
 ## Installing
 
 Use the `byeori-install` skill (`.claude/skills/byeori-install/SKILL.md`): it walks the person

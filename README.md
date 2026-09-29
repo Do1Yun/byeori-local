@@ -1,3 +1,5 @@
+> Local LLM fork: see [local development setup](docs/LOCAL-DEVELOPMENT.md) for the new CLI and MCP runtime. The upstream AWS documentation follows.
+
 # Byeori
 
 Byeori is a scientific knowledge system that a lab installs in its own AWS account. The original
