@@ -730,3 +730,40 @@ def test_a_note_indexed_under_an_earlier_identity_stops_answering_searches(heade
     service.process(paper_id)
     assert service.store.integrity_problems() == []
     assert [hit["doc_id"] for hit in service.store.search("BLEU")] == [result["stem"]]
+
+
+def test_an_answer_that_names_paragraphs_keeps_every_note_it_read(local):
+    """qwen3:8b answered from three notes as [E1-P0040], [E2-P0056], [E3]; only E3 was recorded."""
+    service, paper_id, _ = local
+    service.process(paper_id)
+    service.backend.answer = ("Bahdanau reports 34.16 [E1-P0001]. The Transformer reports 28.4 "
+                              "[E1-P0001, P0002]. BERT is not a translation model [E1].")
+    answer = service.ask("Compare the BLEU scores", paper_id)
+    assert answer["answer_status"] == "answered"
+    assert [citation["label"] for citation in answer["citations"]] == ["E1"]
+    assert answer["citations"][0]["block_ids"] == ["P0001", "P0002"]
+
+
+def test_an_answer_citing_a_paragraph_the_note_does_not_have_is_withheld(local):
+    service, paper_id, _ = local
+    service.process(paper_id)
+    service.backend.answer = "It reports 99 BLEU [E1-P9999]."
+    answer = service.ask("How good is it?", paper_id)
+    assert answer["answer_status"] == "insufficient_evidence"
+    assert answer["reason"] == "model_citation_unresolvable"
+    assert "P9999" in answer["answer"] and "99 BLEU" not in answer["answer"]
+
+
+def test_every_note_an_answer_cites_is_returned_as_a_citation(workspace, tmp_path):
+    store, first_id, _ = workspace
+    service = LocalService(store, Model(), Extractor())
+    service.process(first_id)
+    second = tmp_path / "second.pdf"
+    second.write_bytes(b"%PDF-1.7\nanother paper about the same cohort")
+    second_id = store.add(second, "Another cohort study")["paper_id"]
+    service.process(second_id)
+
+    service.backend.answer = "One says 28.4 [E1-P0001] and the other says 28.4 [E2]."
+    answer = service.ask("What do they report?")
+    assert [citation["label"] for citation in answer["citations"]] == ["E1", "E2"]
+    assert {citation["paper_id"] for citation in answer["citations"]} == {first_id, second_id}

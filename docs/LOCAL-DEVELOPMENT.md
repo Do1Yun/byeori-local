@@ -18,7 +18,7 @@
 | 노트 revision 보존과 revision 고정 조회 | mock 검증 |
 | 노트·검색·활성 포인터·작업 성공의 단일 트랜잭션 확정 | mock 검증 |
 | FTS5/BM25 검색 | 실서비스 검증 |
-| 인용 답변과 근거 부족 시 유보 | 실서비스 검증 |
+| 인용 답변, 문단 단위 인용 검증, 근거 부족 시 유보 | 실서비스 검증 (노트 3편 대상) |
 | 작업 receipt(단계·추출기 버전·prompt digest·설정) | 실서비스 검증 |
 | 워크스페이스 무결성 점검(`check`) | 실서비스 검증 |
 | MCP stdio 도구(읽기·검색·질문) | 실서비스 검증 (실제 stdio 서버 구동·조회·취소) |
@@ -124,7 +124,9 @@ byeori-local check
 
 CLI의 `ask`는 이 프로세스가 직접 실행하므로 답이 나올 때까지 기다립니다. 기다리지 않는 제출은 호출보다 오래 사는 MCP 서버의 기능입니다. 두 경로 모두 질문 내용과 범위를 job에 기록합니다.
 
-`read_evidence_note`는 `next_start`로 다음 범위를 읽고, 반환된 `revision_id`를 다시 넘기면 같은 버전을 계속 읽습니다. 문단 citation `[P0001]`은 `read_paper_context(paper_id, paragraph_id, revision)`로 그 revision이 읽은 추출에 연결합니다. `ask_byeori`는 `answer_status`가 `answered` 또는 `insufficient_evidence`이며, 근거가 없거나 모델 답변의 근거 라벨을 확인할 수 없으면 오류가 아니라 유보를 반환하고 답변 본문을 돌려주지 않습니다. 인용에는 `note_revision_id`, `note_sha256`, `extraction_id`, `extraction_status`가 함께 옵니다.
+`read_evidence_note`는 `next_start`로 다음 범위를 읽고, 반환된 `revision_id`를 다시 넘기면 같은 버전을 계속 읽습니다. 문단 citation `[P0001]`은 `read_paper_context(paper_id, paragraph_id, revision)`로 그 revision이 읽은 추출에 연결합니다. `ask_byeori`는 `answer_status`가 `answered` 또는 `insufficient_evidence`이며, 오류가 아니라 유보를 반환하고 그때는 답변 본문을 돌려주지 않습니다. `reason`은 `no_search_hit`(검색 근거 없음 — 모델을 호출하지 않습니다), `model_answer_uncited`(근거 라벨 확인 불가), `model_citation_unresolvable`(그 노트에 없는 문단을 인용)입니다.
+
+답변은 `[E1]` 또는 문단까지 지목하는 `[E1-P0042]`, `[E1-P0042, P0043]` 형식으로 인용합니다. 인용된 문단 ID는 **그 노트가 실제로 읽은 추출에 있는지 확인**하며, 없으면 답변을 반환하지 않습니다. 인용에는 `note_revision_id`, `note_sha256`, `extraction_id`, `extraction_status`와 함께 `block_ids`가 옵니다. `read_paper_context(paper_id, block_id, revision)`으로 그 문단의 원문까지 이어집니다.
 
 ## 측정값
 
@@ -136,6 +138,7 @@ Apple M4 / 10 core / RAM 16 GB / macOS 15.7.4, GROBID 0.9.1-crf(colima 4 cpu · 
 | 노트 생성(한 패스) | 1분 50초 ~ 3분 (입력 8,567 token, 출력 1,764 token) |
 | 같은 논문을 context 16384에서 부분 분할 | 4개 부분, 9분 11초, 85/85 블록 제시, digest가 인용한 블록 61개 |
 | 질문 1건(한국어, 논문 지정) | 42초 ~ 70초 |
+| 질문 1건(한국어, 노트 3편 근거) | 1분 40초 |
 | 모델 상주 메모리 | context 40960에서 8.3 GB (100% GPU) |
 
 모델 1개와 GROBID VM을 동시에 올리면 16 GB 중 약 14 GB를 점유합니다. 더 큰 모델을 쓰려면 GROBID를 필요할 때만 실행하는 운용이 필요합니다. 한 편의 측정값이며 논문 유형별 분포는 아닙니다.
