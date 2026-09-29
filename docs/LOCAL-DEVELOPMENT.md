@@ -21,15 +21,15 @@
 | 인용 답변과 근거 부족 시 유보 | 실서비스 검증 |
 | 작업 receipt(단계·추출기 버전·prompt digest·설정) | 실서비스 검증 |
 | 워크스페이스 무결성 점검(`check`) | 실서비스 검증 |
-| MCP stdio 도구(읽기·검색·질문) | mock 검증 (실제 클라이언트 연결은 미검증) |
+| MCP stdio 도구(읽기·검색·질문) | 실서비스 검증 (실제 stdio 서버 구동·조회·취소) |
+| 질문 job 제출·조회·취소와 질문 이력 기록 | 실서비스 검증 |
 | 창에 안 들어가는 논문의 부분 분할 생성과 coverage 기록 | 실서비스 검증 |
 | 토큰 예산 추정과 입력 잘림 감지 | 실서비스 검증 (실측 2지점 기준) |
 | 필요한 원문 재독(생성 중 자동) | 미구현 |
-| 비동기 질문 job 제출·조회·취소 | 미구현 (동기 실행) |
 | 중간 단계부터의 작업 재개 | 미구현 |
 | Concept·Overview 생성, AWS 저장소 연결 | 미구현 |
 | catalog 페이지네이션·색인 재구축·백업·복원 | 미구현 |
-| schema migration | 미구현 (이전 스키마 워크스페이스는 거부하고 파일은 보존) |
+| schema migration | 실서비스 검증 (노트 3개가 있는 워크스페이스를 제자리에서 2→3으로 올림) |
 | 무모니터 Mac 운영 절차 | 미구현 |
 | 실제 논문 다수에 대한 품질·성능 평가 | 미검증 |
 
@@ -72,6 +72,7 @@ byeori-local search "cohort samples"
 byeori-local read <paper_id> [--revision <revision_id>]
 byeori-local revisions <paper_id>
 byeori-local ask "이 논문의 핵심 방법은?" --paper <paper_id>
+byeori-local cancel <job_id>
 byeori-local status [<job_id>]
 byeori-local check
 ```
@@ -106,8 +107,14 @@ byeori-local check
 }
 ```
 
-도구: `list_papers`, `search_wiki`, `read_evidence_note`, `list_note_revisions`, `read_paper_context`, `ask_byeori`, `get_job`.
+도구: `list_papers`, `search_wiki`, `read_evidence_note`, `list_note_revisions`, `read_paper_context`, `ask_byeori`, `get_job`, `list_jobs`, `cancel_job`.
 등록·생성은 CLI에서 실행합니다. `ask_byeori`는 서버의 Ollama를 호출합니다. 클라이언트 자체가 클라우드 모델이면 반환된 자료는 그 모델의 문맥으로 전달될 수 있습니다.
+
+`ask_byeori`는 **질문을 job으로 제출하고 job ID를 즉시 반환합니다**(측정 0.00초). 로컬 모델은 분 단위로 답하므로 도구 호출을 열어두지 않습니다. `get_job`으로 상태를 조회하고, 답이 나오면 `result`에 담깁니다. 질문이 도는 동안에도 서버는 다른 도구에 응답합니다(생성 중 `search_wiki` 0.00초로 확인). 질문은 워크스페이스당 하나씩 순서대로 실행합니다: 같은 장비에서 두 번째 모델 호출은 첫 번째와 메모리를 다툽니다.
+
+`cancel_job`은 **접수(`cancel_requested`)와 실제 중단(`stopped`)을 구분해 반환합니다.** 이미 모델 호출 안에 들어간 job은 그 호출이 돌아온 뒤 멈추며, 모델이 낸 답은 폐기하고 `status: cancelled`로 기록합니다. 질문을 제출한 프로세스가 답을 받기 전에 종료되면, 다음에 워크스페이스를 여는 쪽이 그 job을 `interrupted`로 기록합니다: 아무도 쓰지 않을 답을 기다리는 중이라고 보고하지 않습니다.
+
+CLI의 `ask`는 이 프로세스가 직접 실행하므로 답이 나올 때까지 기다립니다. 기다리지 않는 제출은 호출보다 오래 사는 MCP 서버의 기능입니다. 두 경로 모두 질문 내용과 범위를 job에 기록합니다.
 
 `read_evidence_note`는 `next_start`로 다음 범위를 읽고, 반환된 `revision_id`를 다시 넘기면 같은 버전을 계속 읽습니다. 문단 citation `[P0001]`은 `read_paper_context(paper_id, paragraph_id, revision)`로 그 revision이 읽은 추출에 연결합니다. `ask_byeori`는 `answer_status`가 `answered` 또는 `insufficient_evidence`이며, 근거가 없거나 모델 답변의 근거 라벨을 확인할 수 없으면 오류가 아니라 유보를 반환하고 답변 본문을 돌려주지 않습니다. 인용에는 `note_revision_id`, `note_sha256`, `extraction_id`, `extraction_status`가 함께 옵니다.
 
@@ -120,7 +127,7 @@ Apple M4 / 10 core / RAM 16 GB / macOS 15.7.4, GROBID 0.9.1-crf(colima 4 cpu · 
 | GROBID 추출 | 약 10초, TEI 89 KB, 블록 85개 |
 | 노트 생성(한 패스) | 1분 50초 ~ 3분 (입력 8,567 token, 출력 1,764 token) |
 | 같은 논문을 context 16384에서 부분 분할 | 4개 부분, 9분 11초, 85/85 블록 제시, digest가 인용한 블록 61개 |
-| 질문 1건(한국어 → 영어 검색어 번역 포함) | 약 70초 |
+| 질문 1건(한국어, 논문 지정) | 42초 ~ 70초 |
 | 모델 상주 메모리 | context 40960에서 8.3 GB (100% GPU) |
 
 모델 1개와 GROBID VM을 동시에 올리면 16 GB 중 약 14 GB를 점유합니다. 더 큰 모델을 쓰려면 GROBID를 필요할 때만 실행하는 운용이 필요합니다. 한 편의 측정값이며 논문 유형별 분포는 아닙니다.
@@ -136,7 +143,8 @@ Apple M4 / 10 core / RAM 16 GB / macOS 15.7.4, GROBID 0.9.1-crf(colima 4 cpu · 
 - digest 전체가 노트 한 패스에 들어가지 않으면 필요한 context를 알려주고 **거부합니다**. digest를 다시 합치는 라운드는 넣지 않았습니다: 실측에서 2개 합치기가 입력당 출력 1.76배, 4개가 1.22배로 압축이 아니라 팽창이었고, 수렴하는 라운드가 없습니다. 논문 자체의 digest는 약 0.54로 압축됩니다.
 - 질문은 노트 기반이며 자동 원문 재독·위키 편집은 하지 않습니다. MCP로 원문 문단을 직접 확인할 수 있습니다.
 - Concept·Overview 생성, AWS 저장소 연결, 자동 작업 큐, 백업 자동화는 후속 구현입니다.
-- MCP는 stdio이고 질문은 동기 실행입니다. 클라이언트 timeout을 충분히 설정해야 합니다.
+- MCP는 stdio입니다. 질문은 job이므로 클라이언트 timeout 문제는 없지만, 서버 프로세스가 죽으면 그 안에서 돌던 질문은 사라지고 `interrupted`로 기록됩니다.
+- 이전 스키마 워크스페이스는 제자리에서 올립니다(컬럼 추가). 올릴 수 없는 변경이 나오면 파일을 보존한 채 거부하고, 이 릴리스로 만든 워크스페이스에서 다시 게시하도록 안내합니다.
 - 실제 논문 다수에 대한 품질·속도 평가는 별도 진행해야 합니다.
 
 ## 테스트

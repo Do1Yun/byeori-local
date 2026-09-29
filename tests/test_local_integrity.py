@@ -10,7 +10,7 @@ import re
 
 import pytest
 
-from byeori.local.llm import Generation
+from byeori.local.llm import Generation, ModelError
 from byeori.local.service import HEADINGS, LocalService, extraction_status, parse_tei
 from byeori.local.store import LocalStore
 
@@ -421,3 +421,168 @@ def test_the_token_estimate_stays_above_what_the_model_reported(letters, digits,
     text = "a" * letters + "1" * digits + " " * spaces + "|" * punctuation
     assert estimate_tokens(text) >= reported
     assert estimate_tokens(text) <= reported * 2, "this much headroom would split papers that fit"
+
+
+# --- R07: a question is a job, so a slow model never blocks the client --------------------
+
+class SlowModel(PartsModel):
+    """Answers only when released, so a test can look at the client while the model is busy."""
+
+    def __init__(self):
+        super().__init__()
+        self.release = __import__("threading").Event()
+        self.started = __import__("threading").Event()
+        self.answer = "It reaches 28.4 BLEU. [E1]"
+
+    def generate(self, system, prompt):
+        if "Evidence Note" in system or system.startswith("Digest"):
+            return Generation("\n\n".join(f"## {heading}\n\nA value. [P0001]" for heading in HEADINGS),
+                              self.model, 100, 200, "stop")
+        self.started.set()
+        assert self.release.wait(5), "the model was never released"
+        return Generation(self.answer, self.model, 100, 200, "stop")
+
+
+@pytest.fixture
+def answered(workspace):
+    from byeori.local.jobs import QuestionJobs
+    store, paper_id, _ = workspace
+    service = LocalService(store, SlowModel(), Extractor())
+    service.process(paper_id)
+    return service, QuestionJobs(service), paper_id
+
+
+def test_a_question_returns_a_job_id_before_the_model_has_answered(answered):
+    service, jobs, paper_id = answered
+    submitted = jobs.submit("How good is it?", paper_id)
+    assert submitted["status"] == "queued" and submitted["job_id"]
+    assert service.backend.started.wait(5), "the question never reached the model"
+    assert jobs.store.job(submitted["job_id"])["status"] == "running"
+    service.backend.release.set()
+    job = jobs.wait(submitted["job_id"], timeout=5)
+    assert job["status"] == "succeeded"
+    assert job["result"]["answer_status"] == "answered"
+    assert job["result"]["citations"][0]["paper_id"] == paper_id
+
+
+def test_the_question_asked_is_recorded_with_its_scope(answered):
+    service, jobs, paper_id = answered
+    job_id = jobs.submit("무슨 방법을 썼나?", paper_id)["job_id"]
+    service.backend.release.set()
+    jobs.wait(job_id, timeout=5)
+    job = jobs.store.job(job_id)
+    assert job["kind"] == "question"
+    assert job["request"]["question"] == "무슨 방법을 썼나?"
+    assert job["request"]["paper_id"] == paper_id
+    assert job["stage"] == "answer"
+
+
+def test_one_question_runs_at_a_time(answered):
+    service, jobs, paper_id = answered
+    first = jobs.submit("First?", paper_id)["job_id"]
+    second = jobs.submit("Second?", paper_id)["job_id"]
+    assert service.backend.started.wait(5)
+    assert jobs.store.job(second)["status"] == "queued", "a second model call would share the memory"
+    service.backend.release.set()
+    assert jobs.wait(first, timeout=5)["status"] == "succeeded"
+    assert jobs.wait(second, timeout=5)["status"] == "succeeded"
+
+
+def test_cancelling_separates_the_request_from_having_stopped(answered):
+    service, jobs, paper_id = answered
+    job_id = jobs.submit("How good is it?", paper_id)["job_id"]
+    assert service.backend.started.wait(5)
+    accepted = jobs.cancel(job_id)
+    assert accepted["cancel_requested"] and not accepted["stopped"], \
+        "a job inside the model call has accepted the request but has not stopped"
+    service.backend.release.set()
+    job = jobs.wait(job_id, timeout=5)
+    assert job["status"] == "cancelled" and job["result"] is None
+    assert "discarded" in job["error"]
+
+
+def test_a_question_whose_model_call_fails_does_not_end_the_worker(answered):
+    service, jobs, paper_id = answered
+    service.backend.release.set()
+    original = service.backend.generate
+
+    def broken(system, prompt):
+        if "Evidence Note" not in system:
+            raise ModelError("the server went away")
+        return original(system, prompt)
+
+    service.backend.generate = broken
+    failed = jobs.submit("Broken?", paper_id)["job_id"]
+    job = jobs.wait(failed, timeout=5)
+    assert job["status"] == "failed" and "went away" in job["error"] and job["stage"] == "answer"
+
+    service.backend.generate = original
+    good = jobs.submit("Still working?", paper_id)["job_id"]
+    assert jobs.wait(good, timeout=5)["status"] == "succeeded", \
+        "one failed question must not stop the ones queued behind it"
+
+
+def test_a_question_for_an_unknown_paper_is_refused_at_submission(answered):
+    _, jobs, _ = answered
+    with pytest.raises(ValueError, match="Unknown paper"):
+        jobs.submit("Broken?", "not-a-paper-id")
+
+
+# --- R12: a workspace created by an earlier schema keeps its notes -------------------------
+
+def test_a_workspace_from_an_earlier_schema_keeps_its_notes(local):
+    import sqlite3
+    service, paper_id, _ = local
+    service.process(paper_id)
+    published = service.store.note(paper_id)
+    root = service.store.root
+
+    connection = sqlite3.connect(root / "catalog.sqlite3")
+    with connection:
+        connection.execute("DROP INDEX jobs_queue")
+        for column in ("kind", "request", "cancel_requested"):
+            connection.execute(f"ALTER TABLE jobs DROP COLUMN {column}")
+        connection.execute("UPDATE schema_version SET version=2")
+    connection.close()
+
+    reopened = LocalStore(root)
+    assert reopened.note(paper_id) == published, "a migration must not cost a published note"
+    assert reopened.integrity_problems() == []
+    assert reopened.jobs()[0]["kind"] == "note", "jobs written before the column default to notes"
+
+
+def test_processing_a_paper_does_not_interrupt_a_running_question(answered):
+    service, jobs, paper_id = answered
+    job_id = jobs.submit("How good is it?", paper_id)["job_id"]
+    assert service.backend.started.wait(5)
+    service.process(paper_id)
+    assert jobs.store.job(job_id)["status"] == "running", \
+        "the note worker must not mark another kind of job interrupted"
+    service.backend.release.set()
+    assert jobs.wait(job_id, timeout=5)["status"] == "succeeded"
+
+
+def test_a_question_left_by_a_dead_process_is_not_left_queued(answered):
+    from byeori.local.jobs import QuestionJobs
+    service, jobs, paper_id = answered
+    job_id = service.store.start_question("Who will run this?", paper_id)
+    with service.store.db() as db:      # a PID that is not running any more
+        db.execute("UPDATE jobs SET request=? WHERE job_id=?",
+                   (json.dumps({"question": "Who will run this?", "paper_id": paper_id,
+                                "pid": 2 ** 22}), job_id))
+
+    QuestionJobs(service)               # a new process opening the workspace
+    job = service.store.job(job_id)
+    assert job["status"] == "interrupted"
+    assert "ended before it was answered" in job["error"]
+
+
+def test_a_question_this_process_still_owns_is_left_alone(answered):
+    from byeori.local.jobs import QuestionJobs
+    service, jobs, paper_id = answered
+    job_id = jobs.submit("How good is it?", paper_id)["job_id"]
+    assert service.backend.started.wait(5)
+    QuestionJobs(service)               # another reader must not declare a live job orphaned
+    assert service.store.job(job_id)["status"] == "running"
+    service.backend.release.set()
+    assert jobs.wait(job_id, timeout=5)["status"] == "succeeded"

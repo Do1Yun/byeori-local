@@ -156,7 +156,8 @@ def test_mcp_tools_use_local_service(local):
     async def check():
         tools = await server.list_tools()
         assert {t.name for t in tools} == {"list_papers", "search_wiki", "read_evidence_note",
-            "list_note_revisions", "read_paper_context", "ask_byeori", "get_job"}
+            "list_note_revisions", "read_paper_context", "ask_byeori", "cancel_job", "get_job",
+            "list_jobs"}
         result = await server.call_tool("search_wiki", {"query": "cohort"})
         assert pid in str(result)
     asyncio.run(check())

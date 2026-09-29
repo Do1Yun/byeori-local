@@ -2,13 +2,24 @@
 from mcp.server.fastmcp import FastMCP
 
 from .cli import build_service
+from .jobs import QuestionJobs
 
 
 def create_server(service=None):
     mcp = FastMCP("byeori-local")
+    # One service and one question worker for the life of the server: a job submitted by one
+    # call has to still be there for the call that polls it.
+    state = {"service": service, "jobs": None}
 
     def current():
-        return service if service is not None else build_service()
+        if state["service"] is None:
+            state["service"] = build_service()
+        return state["service"]
+
+    def questions():
+        if state["jobs"] is None:
+            state["jobs"] = QuestionJobs(current())
+        return state["jobs"]
 
     @mcp.tool()
     def list_papers() -> list[dict]:
@@ -38,16 +49,32 @@ def create_server(service=None):
 
     @mcp.tool()
     def ask_byeori(question: str, paper_id: str | None = None) -> dict:
-        """Answer with the configured Ollama model. Synchronous; may take several minutes.
+        """Submit a question and return its job ID at once; the local model takes minutes.
 
-        Returns answer_status 'answered' or 'insufficient_evidence'; a refusal is not an error.
+        Poll get_job for the job's status. Its result carries answer_status 'answered' or
+        'insufficient_evidence'; a refusal to answer is not an error. One question runs at a time.
         """
-        return current().ask(question, paper_id)
+        return questions().submit(question, paper_id)
 
     @mcp.tool()
-    def get_job(job_id: str) -> list[dict]:
-        """Inspect a CLI processing job: its status, the stage it reached, and its error."""
-        return current().store.jobs(job_id)
+    def cancel_job(job_id: str) -> dict:
+        """Ask a question job to stop.
+
+        cancel_requested says the request was accepted; stopped says the job has actually ended.
+        A job already inside the model call stops when that call returns, and its answer is
+        discarded.
+        """
+        return questions().cancel(job_id)
+
+    @mcp.tool()
+    def get_job(job_id: str) -> dict:
+        """A job's status, the stage it reached, its error, and its result once it succeeded."""
+        return current().store.job(job_id)
+
+    @mcp.tool()
+    def list_jobs(limit: int = 20) -> list[dict]:
+        """Recent jobs of both kinds, newest first: papers processed and questions asked."""
+        return current().store.jobs(limit=limit)
 
     return mcp
 

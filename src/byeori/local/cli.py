@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 
+from .jobs import QuestionJobs
 from .llm import OllamaBackend
 from .service import GrobidExtractor, LocalService
 from .store import LocalStore
@@ -62,6 +63,8 @@ def main(argv=None):
     ask = sub.add_parser("ask")
     ask.add_argument("question")
     ask.add_argument("--paper")
+    cancel = sub.add_parser("cancel")
+    cancel.add_argument("job_id")
     status = sub.add_parser("status")
     status.add_argument("job_id", nargs="?")
     args = parser.parse_args(argv)
@@ -86,7 +89,13 @@ def main(argv=None):
             case "search": result = service.store.search(args.query)
             case "read": result = service.read(args.paper_id, start=args.start, revision=args.revision)
             case "revisions": result = service.store.revisions(args.paper_id)
-            case "ask": result = service.ask(args.question, args.paper)
+            case "ask":
+                # A question is a recorded job here too, and this foreground process runs it:
+                # submitting without waiting belongs to the MCP server, which outlives the call.
+                jobs = QuestionJobs(service)
+                job = jobs.wait(jobs.submit(args.question, args.paper)["job_id"])
+                result = job["result"] if job["status"] == "succeeded" else job
+            case "cancel": result = QuestionJobs(service).cancel(args.job_id)
             case "status": result = service.store.jobs(args.job_id)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0

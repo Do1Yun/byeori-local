@@ -274,8 +274,9 @@ class LocalService:
         with worker_lock(self.store.root):
             # The OS lock proves no other processing worker remains alive in this workspace.
             with self.store.db() as db:
+                # Question jobs run on their own thread and are not this worker's to interrupt.
                 db.execute("UPDATE jobs SET status='interrupted', finished_at=?, error=? "
-                           "WHERE status='running'",
+                           "WHERE status='running' AND (kind IS NULL OR kind='note')",
                            (now(), "Worker stopped before completion; rerun process to retry"))
             return self._process(paper_id)
 

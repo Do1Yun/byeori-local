@@ -13,8 +13,13 @@ import uuid
 
 from byeori.wiki_search import search_index
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 JOB_STATUSES = ("queued", "running", "succeeded", "failed", "cancelled", "interrupted")
+TERMINAL_STATUSES = ("succeeded", "failed", "cancelled", "interrupted")
+# Columns added after a workspace may already hold notes, so they are added in place.
+MIGRATIONS = {3: ["ALTER TABLE jobs ADD COLUMN kind TEXT",
+                  "ALTER TABLE jobs ADD COLUMN request TEXT",
+                  "ALTER TABLE jobs ADD COLUMN cancel_requested TEXT"]}
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS papers (
@@ -22,7 +27,9 @@ CREATE TABLE IF NOT EXISTS papers (
     created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS jobs (
     job_id TEXT PRIMARY KEY, paper_id TEXT, status TEXT NOT NULL, stage TEXT,
-    created_at TEXT NOT NULL, finished_at TEXT, error TEXT, result TEXT);
+    created_at TEXT NOT NULL, finished_at TEXT, error TEXT, result TEXT,
+    kind TEXT, request TEXT, cancel_requested TEXT);
+CREATE INDEX IF NOT EXISTS jobs_queue ON jobs (kind, status, created_at);
 -- Every note ever published stays addressable: a citation written last month names the
 -- revision it read, so it keeps resolving to the paragraph it actually cited.
 CREATE TABLE IF NOT EXISTS note_versions (
@@ -52,6 +59,18 @@ def digest(value: bytes):
     return hashlib.sha256(value).hexdigest()
 
 
+def _alive(pid):
+    """Whether that process still exists. A recycled PID would read as alive; on one machine
+    running one workspace that is rarer than a crashed worker, and only delays a sweep."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        return True
+    return True
+
+
 class LocalStore:
     def __init__(self, root: Path, *, create=True):
         self.root = root.expanduser().resolve()
@@ -61,14 +80,35 @@ class LocalStore:
             self.root.mkdir(parents=True, exist_ok=True)
         with self.db() as db:
             self._upgrade(db)
+            # Migrate before the schema script runs: its indexes name columns a migration adds.
+            if db.execute("SELECT name FROM sqlite_master WHERE type='table' AND "
+                          "name='schema_version'").fetchone():
+                row = db.execute("SELECT version FROM schema_version").fetchone()
+                if row and row["version"] != SCHEMA_VERSION:
+                    self._migrate(db, row["version"])
             db.executescript(SCHEMA)
-            row = db.execute("SELECT version FROM schema_version").fetchone()
-            if row is None:
+            if db.execute("SELECT version FROM schema_version").fetchone() is None:
                 db.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
-            elif row["version"] != SCHEMA_VERSION:
-                raise ValueError(f"Workspace schema is version {row['version']}, this release needs "
-                                 f"{SCHEMA_VERSION}. Papers, notes and runs are untouched on disk; "
-                                 "rerun process in a workspace created by this release.")
+        # Opening the workspace is when an orphan becomes visible, so it is also when it is
+        # recorded as one: a reader must never be told a question is still waiting for an answer
+        # that no process is going to write.
+        self.sweep_orphaned_questions()
+
+    @staticmethod
+    def _migrate(db, version):
+        """Carry a workspace forward in place. Notes, runs and originals are never rewritten."""
+        if version > SCHEMA_VERSION:
+            raise ValueError(f"Workspace schema is version {version} and this release reads "
+                             f"{SCHEMA_VERSION}; use the release that wrote it.")
+        for step in range(version + 1, SCHEMA_VERSION + 1):
+            if step not in MIGRATIONS:
+                raise ValueError(f"No migration to schema version {step}; every file is preserved, "
+                                 "so a workspace created by this release can republish from them.")
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(jobs)")}
+            for statement in MIGRATIONS[step]:
+                if statement.split()[-2] not in columns:
+                    db.execute(statement)
+        db.execute("UPDATE schema_version SET version=?", (SCHEMA_VERSION,))
 
     @staticmethod
     def _upgrade(db):
@@ -183,12 +223,72 @@ class LocalStore:
                 "LEFT JOIN note_versions v ON v.revision_id = n.revision_id "
                 "ORDER BY p.created_at DESC LIMIT 100")]
 
+    TERMINAL = TERMINAL_STATUSES
+
     def start(self, paper_id):
         job_id = uuid.uuid4().hex
         with self.db() as db:
-            db.execute("INSERT INTO jobs(job_id,paper_id,status,stage,created_at) VALUES (?,?,?,?,?)",
-                       (job_id, paper_id, "running", "start", now()))
+            db.execute("INSERT INTO jobs(job_id,paper_id,status,stage,created_at,kind) "
+                       "VALUES (?,?,?,?,?,?)", (job_id, paper_id, "running", "start", now(), "note"))
         return job_id
+
+    def start_question(self, question, paper_id=None):
+        """A question is recorded before the model is called, so it is never an unlogged answer."""
+        job_id = uuid.uuid4().hex
+        # The process that submits a question is the one that runs it, so its PID makes an
+        # orphaned job recognisable after that process is gone.
+        request = json.dumps({"question": question, "paper_id": paper_id, "pid": os.getpid()},
+                             ensure_ascii=False)
+        with self.db() as db:
+            db.execute("INSERT INTO jobs(job_id,paper_id,status,stage,created_at,kind,request) "
+                       "VALUES (?,?,?,?,?,?,?)",
+                       (job_id, paper_id, "queued", "queued", now(), "question", request))
+        return job_id
+
+    def orphaned_questions(self):
+        """Questions left behind by a process that is no longer running."""
+        orphans = []
+        for job in self.jobs(limit=1000):
+            if job["kind"] != "question" or job["status"] not in {"queued", "running"}:
+                continue
+            pid = (job["request"] or {}).get("pid") if isinstance(job["request"], dict) else None
+            if pid is None or not _alive(pid):
+                orphans.append(job["job_id"])
+        return orphans
+
+    def sweep_orphaned_questions(self):
+        for job_id in self.orphaned_questions():
+            self.finish(job_id, "interrupted", stage="answer",
+                        error="The process that submitted this question ended before it was "
+                              "answered; ask again")
+
+    def claim_question(self):
+        """Take the oldest queued question, one worker at a time."""
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM jobs WHERE kind='question' AND status='queued' "
+                             "ORDER BY created_at LIMIT 1").fetchone()
+            if row is None:
+                return None
+            db.execute("UPDATE jobs SET status='running', stage='answer' WHERE job_id=?",
+                       (row["job_id"],))
+        return self.job(row["job_id"])
+
+    def request_cancel(self, job_id):
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            if row is None:
+                raise ValueError("Unknown job ID")
+            if row["status"] not in TERMINAL_STATUSES and row["cancel_requested"] is None:
+                db.execute("UPDATE jobs SET cancel_requested=? WHERE job_id=?", (now(), job_id))
+        return self.job(job_id)
+
+    def job(self, job_id):
+        rows = self.jobs(job_id)
+        if not rows:
+            raise ValueError("Unknown job ID")
+        return rows[0]
 
     def finish(self, job_id, status, result=None, error=None, stage=None):
         if status not in JOB_STATUSES:
@@ -206,11 +306,24 @@ class LocalStore:
         """The last write of a successful job; publish() calls it inside its own transaction."""
         self._record_terminal(db, job_id, "succeeded", result, None, stage)
 
-    def jobs(self, job_id=None):
+    def jobs(self, job_id=None, limit=20):
         with self.db() as db:
             rows = db.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)) if job_id else db.execute(
-                "SELECT * FROM jobs ORDER BY created_at DESC LIMIT 20")
-            return [dict(row) for row in rows]
+                "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,))
+            return [self._job(row) for row in rows]
+
+    @staticmethod
+    def _job(row):
+        """A job as a reader needs it: its request and its result read back as objects."""
+        job = dict(row)
+        job["kind"] = job.get("kind") or "note"
+        for field in ("request", "result"):
+            if job.get(field):
+                try:
+                    job[field] = json.loads(job[field])
+                except json.JSONDecodeError:
+                    pass
+        return job
 
     def publish(self, paper, job_id, markdown, *, extraction_id, extraction_path,
                 extraction_status, model, validation_level, result):
