@@ -81,7 +81,7 @@ def test_original_tamper_is_detected_before_model(local):
 
 def test_no_search_evidence_does_not_call_model(local):
     service, _, _ = local
-    assert service.ask("cohort")["status"] == "insufficient_evidence"
+    assert service.ask("cohort")["answer_status"] == "insufficient_evidence"
     assert service.backend.calls == 0
 
 
@@ -89,8 +89,9 @@ def test_unknown_answer_citation_is_rejected(local):
     service, pid, _ = local
     service.process(pid)
     service.backend.answer = "Made up. [E9]"
-    with pytest.raises(ModelError, match="citations"):
-        service.ask("cohort", pid)
+    answer = service.ask("cohort", pid)
+    assert answer["answer_status"] == "insufficient_evidence"
+    assert "Made up" not in answer["answer"]
 
 
 def test_paths_cannot_escape_workspace(local):
@@ -147,7 +148,7 @@ def test_mcp_tools_use_local_service(local):
     async def check():
         tools = await server.list_tools()
         assert {t.name for t in tools} == {"list_papers", "search_wiki", "read_evidence_note",
-            "read_paper_context", "ask_byeori", "get_job"}
+            "list_note_revisions", "read_paper_context", "ask_byeori", "get_job"}
         result = await server.call_tool("search_wiki", {"query": "cohort"})
         assert pid in str(result)
     asyncio.run(check())

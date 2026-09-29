@@ -6,6 +6,7 @@ fixture copies the shape GROBID 0.9.1 actually emits for a paper with a numeric 
 including the abstract nested in a <div> and a figure caption between two body paragraphs.
 """
 import json
+import re
 
 import pytest
 
@@ -238,3 +239,27 @@ def test_a_failed_job_leaves_a_receipt_naming_the_stage(local):
     assert receipt["extraction"]["status"] == "complete"
     assert receipt["extractor"]["version"] == "0.9.1"
     assert receipt["prompt_sha256"] and receipt["settings"]["context"] == 32768
+
+
+def test_a_level_three_heading_is_still_the_same_section(workspace):
+    """qwen3:8b wrote '### 2. Key Contributions' on the second real run; the names were right."""
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor())
+    service.backend.answer = "## One-line Summary  \n\nIt reports 28.4 BLEU. [P0001]\n\n" + "\n\n".join(
+        f"### {heading}\n\nIt reports 28.4 BLEU. [P0001]" for heading in HEADINGS[1:])
+    assert service.process(paper_id)["status"] == "succeeded"
+    note = service.store.note(paper_id)["text"]
+    assert "### 2. Key Contributions" not in note
+    # The headings a published note carries are the ones byeori's own validator expects of an
+    # evidence note, section 1 included, so the AWS wiki would accept this page unchanged.
+    from byeori.validation import LLM_WIKI_SOURCE_SECTIONS
+    assert re.findall(r"^## (.+)$", note, re.M) == [h[3:] for h in LLM_WIKI_SOURCE_SECTIONS]
+
+
+def test_a_subheading_the_note_invents_is_left_alone(workspace):
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor())
+    service.backend.answer = service.backend.answer.replace(
+        "## 6. Related Work", "## 6. Related Work\n\n### Prior attention mechanisms")
+    service.process(paper_id)
+    assert "### Prior attention mechanisms" in service.store.note(paper_id)["text"]
