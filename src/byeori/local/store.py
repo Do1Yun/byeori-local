@@ -343,7 +343,8 @@ class LocalStore:
         return job
 
     def publish(self, paper, job_id, markdown, *, extraction_id, extraction_path,
-                extraction_status, model, validation_level, result, stem, metadata, summary):
+                extraction_status, model, validation_level, result, stem, metadata, summary,
+                previous_stem=None):
         """Write the note, swap the index, move the active pointer and record the job's success.
 
         All four happen in one transaction, so a reader never finds a live note whose job is
@@ -359,7 +360,7 @@ class LocalStore:
             # Both this document id and the paper's storage key: a workspace written before notes
             # had a document id indexed them under the SHA-256, and leaving those rows would keep
             # a retired note answering searches.
-            for identity in dict.fromkeys((stem, paper_id)):
+            for identity in dict.fromkeys(i for i in (stem, previous_stem, paper_id) if i):
                 db.execute("DELETE FROM sections WHERE rowid IN (SELECT rowid FROM section_map "
                            "WHERE doc_type='note' AND doc_id=?)", (identity,))
                 db.execute("DELETE FROM section_map WHERE doc_type='note' AND doc_id=?", (identity,))
@@ -367,7 +368,8 @@ class LocalStore:
             db.execute("INSERT OR REPLACE INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                        ("note", stem, metadata.get("title") or paper["title"], relative,
                         metadata.get("year", ""), metadata.get("journal", ""),
-                        metadata.get("doi", ""), "", "other", relative, summary))
+                        metadata.get("doi", ""), metadata.get("work_id") or "", "other",
+                        relative, summary))
             matches = list(re.finditer(r"^## (.+)$", markdown, re.M))
             for i, match in enumerate(matches):
                 end = matches[i + 1].start() if i + 1 < len(matches) else len(markdown)
@@ -380,8 +382,7 @@ class LocalStore:
                        (revision_id, paper_id, job_id, relative, digest(body), extraction_id,
                         extraction_path, extraction_status, model, validation_level, now()))
             db.execute("INSERT OR REPLACE INTO notes VALUES (?,?)", (paper_id, revision_id))
-            db.execute("UPDATE papers SET stem=? WHERE paper_id=? AND (stem IS NULL OR stem=?)",
-                       (stem, paper_id, stem))
+            db.execute("UPDATE papers SET stem=? WHERE paper_id=?", (stem, paper_id))
             self._record_success(db, job_id, result | {"revision_id": revision_id})
         return {"path": relative, "revision_id": revision_id, "stem": stem}
 

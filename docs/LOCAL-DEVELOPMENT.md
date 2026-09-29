@@ -28,6 +28,8 @@
 | 필요한 원문 재독(생성 중 자동) | 미구현 |
 | 중간 단계부터의 작업 재개 | 미구현 |
 | TEI 헤더 메타데이터 추출(제목·저자·연도·DOI·학술지) | 실서비스 검증 |
+| OpenAlex로 연도·학술지·work ID 확정과 PDF 대조 승인 | 실서비스 검증 |
+| 노트를 다시 쓰지 않는 메타데이터 정정 | mock 검증 |
 | 기존 위키와 같은 문서 식별자·프론트매터·색인 컬럼 | mock 검증 (upstream 검증기·concept 추출기 직접 호출) |
 | Concept·Overview 생성, AWS 저장소 연결 | 미구현 |
 | catalog 페이지네이션·색인 재구축·백업·복원 | 미구현 |
@@ -83,7 +85,15 @@ byeori-local check
 
 논문은 저장 키(PDF의 SHA-256)와 **문서 식별자**를 따로 가집니다. 문서 식별자는 기존 byeori와 같은 `{첫 저자}-{연도}-{제목 단어}` 형식(예: `zhou-2021-de-novo-variants-in-autism-cohorts`)이며, 추출한 TEI 헤더에서 만듭니다. 검색 결과의 `doc_id`와 노트 경로가 이 식별자이고, `byeori.identity.split_stem`이 그대로 읽습니다. 같은 식별자가 이미 있으면 뒤에 번호를 붙입니다. 한 논문의 식별자는 첫 게시 때 정해지고 노트를 다시 써도 바뀌지 않습니다.
 
-메타데이터는 GROBID가 PDF에서 읽은 그대로 기록하며 교정하지 않습니다. 실제로 이 저장소의 시험 논문에서 GROBID는 소속 줄을 저자로, arXiv 도장 날짜를 출판 연도로 읽었습니다. 프론트매터의 `text_extractor`·`text_extractor_version`이 어느 추출기가 읽었는지 밝힙니다.
+추출한 메타데이터는 **OpenAlex에 대조해 확정합니다.** 경량 CRF GROBID는 실제 저널 PDF의 헤더에서 출판일을 자주 못 뽑습니다(이 저장소의 Nature Communications 논문 두 편 모두 `<date/>`가 비어 있었습니다). 연도가 없으면 그 노트를 연구의 흐름 속에 놓을 수 없으므로, PDF에 인쇄된 DOI로 먼저 조회하고 없으면 제목으로 검색합니다.
+
+받아온 기록은 기존 AWS 경로와 **같은 판정기**(`byeori.identity.judge`)를 통과해야 채택합니다: 제목이 PDF 헤더나 본문 첫 부분과 일치하고 1저자가 어긋나지 않아야 합니다. 승인되면 연도·학술지·DOI·work ID를 채우고 `metadata_source: "openalex"`로 표시하며, 페이지가 다른 값을 인쇄했으면 `extracted_year`·`extracted_journal`에 함께 남깁니다. 판정에 실패하거나 네트워크가 닿지 않으면 추출한 값을 그대로 쓰고 `metadata_source: "extraction"`으로 남깁니다 — 조회는 노트 게시를 막지 않습니다.
+
+`BYEORI_METADATA_LOOKUP=off`로 끌 수 있고, `BYEORI_OPENALEX_MAILTO`는 OpenAlex에 호출자를 밝혀 공용 풀 속도를 유지합니다.
+
+`byeori-local metadata --all`은 이미 게시된 논문의 연도·학술지·work ID를 **모델을 호출하지 않고** 확정합니다. 노트 본문은 모델의 작업물이므로 그대로 복사하고 프론트매터만 다시 쓰며, 게시된 노트는 제자리에서 고치지 않으므로 `revision_reason: "metadata-resolved"`를 단 새 revision이 됩니다. 연도를 나중에 알게 되면 `0000`이던 문서 식별자도 한 번 정정하고, 물러난 식별자는 색인에서 지웁니다. 이전 revision의 인용은 계속 그 문단을 가리킵니다.
+
+프론트매터의 `text_extractor`·`text_extractor_version`이 어느 추출기가 읽었는지 밝힙니다.
 
 노트의 Glossary는 `- **용어**: 정의` 형식이어야 하며, byeori의 concept 추출기가 읽을 수 있는 항목이 3개 미만이면 게시하지 않습니다. 이 형식이 아니면 그 노트는 concept 페이지에 아무것도 기여하지 못합니다.
 

@@ -8,6 +8,7 @@ import sys
 
 from .jobs import QuestionJobs
 from .llm import OllamaBackend
+from .metadata import OPENALEX_API, OpenAlexLookup
 from .service import GrobidExtractor, LocalService
 from .store import LocalStore
 
@@ -31,8 +32,13 @@ def build_service(args=None, *, create=False):
         context=int(setting("context", "BYEORI_CONTEXT", "32768")),
         output=int(setting("output_tokens", "BYEORI_OUTPUT_TOKENS", "4096")))
     store = LocalStore(Path(data_dir), create=create)
+    # Off by default is the wrong default here: a note with no year cannot be placed in the
+    # sequence of work it belongs to, and the lookup never blocks a note when it cannot answer.
+    lookup = None if os.environ.get("BYEORI_METADATA_LOOKUP", "on").lower() in {"off", "0", "false"} \
+        else OpenAlexLookup(os.environ.get("BYEORI_OPENALEX_URL", OPENALEX_API),
+                            mailto=setting("openalex_mailto", "BYEORI_OPENALEX_MAILTO"))
     return LocalService(store, backend, GrobidExtractor(
-        os.environ.get("BYEORI_GROBID_URL", "http://127.0.0.1:8070")))
+        os.environ.get("BYEORI_GROBID_URL", "http://127.0.0.1:8070")), lookup=lookup)
 
 
 def main(argv=None):
@@ -42,10 +48,14 @@ def main(argv=None):
     parser.add_argument("--ollama-url")
     parser.add_argument("--context", type=int)
     parser.add_argument("--output-tokens", type=int)
+    parser.add_argument("--openalex-mailto", help="Identifies you to OpenAlex, or BYEORI_OPENALEX_MAILTO")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init", help="Create the workspace named by --data-dir or BYEORI_LOCAL_DATA")
     sub.add_parser("doctor")
     sub.add_parser("check", help="Report disagreements between notes, search and job status")
+    meta = sub.add_parser("metadata", help="Settle a published paper's year, journal and work ID")
+    meta.add_argument("paper_id", nargs="?")
+    meta.add_argument("--all", action="store_true")
     add = sub.add_parser("add", help="Register a PDF, or every PDF in a folder")
     add.add_argument("path", type=Path, help="A PDF file or a folder of them")
     add.add_argument("--title", help="Only when registering a single file")
@@ -87,6 +97,10 @@ def main(argv=None):
                 problems = service.store.integrity_problems()
                 print(json.dumps({"problems": problems}, ensure_ascii=False, indent=2))
                 return 1 if problems else 0
+            case "metadata":
+                if args.all == bool(args.paper_id):
+                    raise ValueError("Give a paper ID or --all, not both")
+                result = service.refresh_all() if args.all else service.refresh_metadata(args.paper_id)
             case "add": result = service.intake(args.path, args.title)
             case "intake":
                 folder = service.inbox()

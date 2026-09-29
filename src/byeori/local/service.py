@@ -11,6 +11,7 @@ import httpx
 import math
 
 from .llm import RESERVE_TOKENS, LLMBackend, ModelError, estimate_tokens
+from .metadata import merged, resolve
 from .locking import worker_lock
 from .store import LocalStore, digest, now
 
@@ -344,10 +345,39 @@ def validate_note(text, blocks):
     return VALIDATION_LEVEL
 
 
+def split_frontmatter(text):
+    """The note's frontmatter and its body, so one can be rewritten without touching the other."""
+    if not text.startswith("---\n"):
+        return "", text
+    end = text.find("\n---\n", 4)
+    return (text[:end + 5], text[end + 5:].lstrip("\n")) if end > 0 else ("", text)
+
+
+def parse_frontmatter(text):
+    """The note's frontmatter as fields, and the body the model wrote."""
+    front, body = split_frontmatter(text)
+    fields = {}
+    for line in front.splitlines():
+        key, separator, value = line.partition(":")
+        if not separator or line.strip() in {"---", ""}:
+            continue
+        try:
+            fields[key.strip()] = json.loads(value.strip())
+        except json.JSONDecodeError:
+            fields[key.strip()] = value.strip().strip('"')
+    return fields, body
+
+
+def frontmatter_text(fields):
+    return "---\n" + "\n".join(f"{key}: {json.dumps(value, ensure_ascii=False)}"
+                                for key, value in fields.items()) + "\n---\n\n"
+
+
 class LocalService:
-    def __init__(self, store: LocalStore, backend: LLMBackend, extractor=None):
+    def __init__(self, store: LocalStore, backend: LLMBackend, extractor=None, lookup=None):
         self.store, self.backend = store, backend
         self.extractor = extractor or GrobidExtractor()
+        self.lookup = lookup
 
     INBOX = "inbox"
 
@@ -432,12 +462,12 @@ class LocalService:
             self.store.write_new(f"{prefix}/grobid.tei.xml", xml)
             extraction_id = digest(xml)
             status = extraction_status(blocks)
-            metadata = parse_metadata(xml)
-            # A paper keeps the identity its first published note was given, even if a later
-            # extraction reads the title differently.
-            stem = paper.get("stem") or self._free_stem(document_stem(metadata, paper["title"]),
-                                                        paper_id)
-            record["metadata"] = metadata | {"stem": stem}
+            extracted = parse_metadata(xml)
+            found = resolve(xml, document_stem(extracted, paper["title"]), blocks, lookup=self.lookup)
+            metadata = merged(extracted, found)
+            record["metadata"] = {"extracted": extracted, "resolved": found}
+            stem = self._identity(paper, metadata)
+            record["metadata"]["stem"] = stem
             document = {"extraction_id": extraction_id, "pdf_sha256": paper_id,
                         "extraction_status": status, "blocks": blocks}
             self.store.write_new(f"{prefix}/document.json",
@@ -467,6 +497,8 @@ class LocalService:
             front = {"title": metadata.get("title") or paper["title"],
                      "authors": ", ".join(author["name"] for author in metadata["authors"]),
                      "year": metadata.get("year", ""), "doi": metadata.get("doi", ""),
+                     "work_ids": metadata.get("work_id") or "",
+                     "metadata_source": metadata.get("metadata_source", "extraction"),
                      "category": "other", "stem": stem,
                      "pdf_path": paper["pdf_path"], "pdf_filename": f"{paper_id}.pdf",
                      "pdf_sha256": paper_id, "source_format": "pdf",
@@ -485,6 +517,10 @@ class LocalService:
                      "extraction_path": f"{prefix}/document.json"}
             if metadata.get("journal"):
                 front["journal"] = metadata["journal"]
+            # A disagreement between the page and the authority is kept, not resolved away.
+            for field in ("extracted_year", "extracted_journal"):
+                if metadata.get(field) and metadata[field] != metadata.get(field[10:]):
+                    front[field] = metadata[field]
             page = "---\n" + "\n".join(f"{key}: {json.dumps(value, ensure_ascii=False)}"
                                        for key, value in front.items()) + "\n---\n\n"
             info = ("\n\n## 1. Document Information\n\n"
@@ -502,7 +538,8 @@ class LocalService:
                                            extraction_status=status, model=result.model,
                                            validation_level=validation_level, result=result_info,
                                            stem=stem, metadata=metadata,
-                                           summary=note_summary(page))
+                                           summary=note_summary(page),
+                                           previous_stem=paper.get("stem"))
             return result_info | published
         except Exception as exc:
             record["outcome"] = "failed"
@@ -513,6 +550,76 @@ class LocalService:
             self._save_receipt(prefix, record)
             self.store.finish(job_id, "failed", error=str(exc), stage=record["stage"])
             raise RuntimeError(f"Job {job_id} failed: {exc}") from exc
+
+    def _identity(self, paper, metadata):
+        """A paper keeps the identity its first note was given, unless that identity had no year.
+
+        A stem built while the year was unknown cannot be placed in the sequence of work it
+        belongs to, so it is corrected once the year is known and the retired id is unindexed.
+        """
+        from byeori import identity
+        current = paper.get("stem")
+        if current and (identity.split_stem(current)[1] not in ("", "0000") or not metadata.get("year")):
+            return current
+        return self._free_stem(document_stem(metadata, paper["title"]), paper["paper_id"])
+
+    def refresh_metadata(self, paper_id):
+        """Settle a published paper's identity without writing its note again.
+
+        The body is the model's work and is copied unchanged; only what the application writes
+        around it is rebuilt, so a year learned later costs no model time. It still becomes a new
+        revision, because a published note is never edited in place and a citation must keep
+        resolving to what it named.
+        """
+        with worker_lock(self.store.root):
+            return self._refresh(paper_id)
+
+    def refresh_all(self):
+        with worker_lock(self.store.root):
+            results = []
+            for paper in self.store.papers():
+                if paper["note_path"]:
+                    results.append(self._refresh(paper["paper_id"]))
+            return {"changed": sum(r["changed"] for r in results), "papers": results}
+
+    def _refresh(self, paper_id):
+        paper = self.store.paper(paper_id)
+        note = self.store.note(paper_id)
+        fields, body = parse_frontmatter(note["text"])
+        tei = self.store.path(f"runs/{note['job_id']}/grobid.tei.xml").read_bytes()
+        document = json.loads(self.store.path(note["extraction_path"]).read_text(encoding="utf-8"))
+        extracted = parse_metadata(tei)
+        found = resolve(tei, paper.get("stem") or document_stem(extracted, paper["title"]),
+                        document["blocks"], lookup=self.lookup)
+        metadata = merged(extracted, found)
+        changes = {"year": str(metadata.get("year") or ""), "journal": metadata.get("journal") or "",
+                   "doi": metadata.get("doi") or "", "work_ids": metadata.get("work_id") or "",
+                   "metadata_source": metadata.get("metadata_source", "extraction")}
+        stem = self._identity(paper, metadata)
+        if stem == paper.get("stem") and all(fields.get(key) == value for key, value in changes.items()):
+            return {"paper_id": paper_id, "stem": stem, "changed": False,
+                    "state": found.get("state")}
+        job_id = self.store.start(paper_id)
+        try:
+            page = frontmatter_text(fields | changes | {
+                "stem": stem, "revision_reason": "metadata-resolved", "created": now()}) + body
+            result_info = {"job_id": job_id, "paper_id": paper_id, "stem": stem, "status": "succeeded",
+                           "revision_reason": "metadata-resolved",
+                           "extraction_status": note["extraction_status"],
+                           "validation_level": note["validation_level"],
+                           "coverage": {"path": "unchanged", "parts": 0, "blocks_total": 0,
+                                        "blocks_presented": 0}}
+            published = self.store.publish(
+                paper, job_id, page, extraction_id=note["extraction_id"],
+                extraction_path=note["extraction_path"], extraction_status=note["extraction_status"],
+                model=note["model"], validation_level=note["validation_level"], result=result_info,
+                stem=stem, metadata=metadata, summary=note_summary(page),
+                previous_stem=paper.get("stem"))
+        except Exception as exc:
+            self.store.finish(job_id, "failed", error=str(exc), stage="metadata")
+            raise RuntimeError(f"Job {job_id} failed: {exc}") from exc
+        return {"paper_id": paper_id, "changed": True, "state": found.get("state"),
+                "previous_stem": paper.get("stem"), **changes, **published}
 
     def _free_stem(self, stem, paper_id):
         """A document id no other paper here already holds."""

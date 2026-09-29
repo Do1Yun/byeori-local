@@ -864,3 +864,132 @@ def test_a_running_job_says_which_stage_it_is_in(workspace):
     assert any(stage.startswith("generate part 2/") for stage in seen), seen
     assert seen[-1].startswith("generate note from")
     assert store.jobs(result["job_id"])[0]["stage"] == "publish"
+
+
+# --- metadata settled against OpenAlex ------------------------------------------------------
+
+WORK = {"id": "https://openalex.org/W4409484936", "doi": "https://doi.org/10.1000/example.2021.4567",
+        "display_name": "De novo variants in autism cohorts", "publication_year": 2021,
+        "publication_date": "2021-04-16", "type": "article",
+        "authorships": [{"author": {"display_name": "Mei Zhou"}},
+                        {"author": {"display_name": "Ada Okafor"}}],
+        "primary_location": {"source": {"display_name": "Nature Genetics", "id": "S1", "issn": ["1"]}},
+        "cited_by_count": 7}
+NO_YEAR_TEI = HEADED_TEI.replace(b'<date type="published" when="2021-04-16">16 April 2021</date>', b"")
+
+
+def lookup_for(works, calls=None):
+    """An OpenAlex that answers from a fixture; no test reaches the network."""
+    import httpx
+    from byeori.local.metadata import OpenAlexLookup
+
+    def handler(request):
+        if calls is not None:
+            calls.append(str(request.url))
+        return httpx.Response(200, json={"results": works})
+
+    return OpenAlexLookup(transport=httpx.MockTransport(handler), mailto="lab@example.org")
+
+
+def test_a_paper_whose_pdf_prints_no_year_still_gets_one(workspace):
+    """GROBID left the date empty on a real Nature Communications PDF; the DOI was there."""
+    store, paper_id, _ = workspace
+    calls = []
+    service = LocalService(store, Model(), Extractor(NO_YEAR_TEI), lookup=lookup_for([WORK], calls))
+    result = service.process(paper_id)
+    assert result["stem"] == "zhou-2021-de-novo-variants-in-autism-cohorts"
+    note = store.note(paper_id)["text"]
+    assert 'year: "2021"' in note and 'journal: "Nature Genetics"' in note
+    assert 'work_ids: "W4409484936"' in note and 'metadata_source: "openalex"' in note
+    assert any("doi" in call for call in calls), "the DOI printed on the page is asked about first"
+
+
+def test_a_record_that_is_not_this_paper_is_refused(workspace):
+    store, paper_id, _ = workspace
+    other = dict(WORK, display_name="An entirely different paper about hepatocytes",
+                 authorships=[{"author": {"display_name": "Someone Else"}}])
+    service = LocalService(store, Model(), Extractor(NO_YEAR_TEI), lookup=lookup_for([other]))
+    result = service.process(paper_id)
+    assert result["stem"] == "zhou-0000-de-novo-variants-in-autism-cohorts"
+    note = store.note(paper_id)["text"]
+    assert 'metadata_source: "extraction"' in note
+    assert "hepatocytes" not in note
+
+
+def test_a_lookup_that_cannot_answer_never_blocks_a_note(workspace):
+    import httpx
+    from byeori.local.metadata import OpenAlexLookup
+    store, paper_id, _ = workspace
+
+    def refuse(request):
+        raise httpx.ConnectError("no network")
+
+    service = LocalService(store, Model(), Extractor(NO_YEAR_TEI),
+                           lookup=OpenAlexLookup(transport=httpx.MockTransport(refuse)))
+    assert service.process(paper_id)["status"] == "succeeded"
+    assert 'metadata_source: "extraction"' in store.note(paper_id)["text"]
+
+
+def test_the_authority_corrects_a_year_the_page_misprinted(workspace):
+    """GROBID read an arXiv stamp of 2023 as the publication year of a 2017 paper."""
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(HEADED_TEI), lookup=lookup_for([dict(WORK, publication_year=2019)]))
+    service.process(paper_id)
+    note = store.note(paper_id)["text"]
+    assert 'year: "2019"' in note
+    assert 'extracted_year: "2021"' in note, "what the page said is kept, not resolved away"
+
+
+def test_a_year_learned_later_moves_the_paper_and_leaves_no_stale_entry(workspace):
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(NO_YEAR_TEI))      # no lookup at first
+    first = service.process(paper_id)
+    assert first["stem"] == "zhou-0000-de-novo-variants-in-autism-cohorts"
+
+    service.lookup = lookup_for([WORK])
+    refreshed = service.refresh_metadata(paper_id)
+    assert refreshed["changed"] and refreshed["stem"] == "zhou-2021-de-novo-variants-in-autism-cohorts"
+    assert refreshed["previous_stem"] == first["stem"]
+    assert [hit["doc_id"] for hit in store.search("BLEU")] == [refreshed["stem"]]
+    assert store.integrity_problems() == []
+
+
+def test_settling_metadata_does_not_call_the_model(workspace):
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(NO_YEAR_TEI))
+    service.process(paper_id)
+    before = service.backend.calls
+    service.lookup = lookup_for([WORK])
+    service.refresh_metadata(paper_id)
+    assert service.backend.calls == before, "the body is the model's work and is copied, not rewritten"
+
+
+def test_the_note_body_survives_a_metadata_revision_word_for_word(workspace):
+    from byeori.local.service import split_frontmatter
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(NO_YEAR_TEI))
+    service.process(paper_id)
+    before = split_frontmatter(store.note(paper_id)["text"])[1]
+    service.lookup = lookup_for([WORK])
+    service.refresh_metadata(paper_id)
+    after = store.note(paper_id)["text"]
+    assert split_frontmatter(after)[1] == before
+    assert 'revision_reason: "metadata-resolved"' in after
+
+
+def test_settling_metadata_twice_changes_nothing_the_second_time(workspace):
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(NO_YEAR_TEI), lookup=lookup_for([WORK]))
+    service.process(paper_id)
+    assert service.refresh_metadata(paper_id)["changed"] is False
+
+
+def test_an_earlier_revision_still_reads_after_the_paper_moves(workspace):
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(NO_YEAR_TEI))
+    first = service.process(paper_id)
+    service.lookup = lookup_for([WORK])
+    service.refresh_metadata(paper_id)
+    kept = service.read(paper_id, revision=first["revision_id"])
+    assert kept["revision_id"] == first["revision_id"]
+    assert service.context(paper_id, "P0001", revision=first["revision_id"])["text"]
