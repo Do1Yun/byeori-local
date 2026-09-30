@@ -8,7 +8,7 @@
 
 ## 채우는 방법
 
-주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음**
+주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음 / 무인용**
 
 - `맞음` 수치·조건이 논문과 일치하고 인용한 문단이 그 근거를 담고 있음
 - `인용틀림` 값은 맞는데 그 값이 없는 문단을 가리킴
@@ -36,8 +36,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: The advent of the self-attention mechanism 1,2 has further transformed the deep learning field by generating context-aware models that are able to pay attention to large input spaces and learn which elements are most important to focus on in each context, boosting predictions in a wide realm of applications 2,8 .
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0003** (abstract, Abstract)
 
@@ -48,8 +48,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: comprising 29.9 million human single-cell transcriptomes
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0004** (abstract, Abstract)
 
@@ -60,8 +60,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: The fine-tuned Geneformer significantly boosted the ability to predict dosage sensitivity compared to alternative methods (area under the receiver operating characteristic curve (AUC) 0.91)
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0012** (paragraph, Gene dosage sensitivity predictions)
 
@@ -72,8 +72,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: CRISPR-mediated knockout of both Geneformer-predicted targets GSN and PLN in the TTN +/-cells significantly improved the contractile stress
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0015** (paragraph, Gene dosage sensitivity predictions)
 
@@ -88,8 +88,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Geneformer significantly boosted the ability to predict bivalently marked genes compared to alternative methods (AUC 0.93 and 0.88; bivalent versus unmethylated or H3K4me3-only, respectively)
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0019** (paragraph, Chromatin dynamics predictions)
 
@@ -106,8 +106,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: genes are ranked by their expression in that cell normalized by their expression across the entire Genecorpus-30M
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0007** (paragraph, Geneformer architecture and pretraining)
 
@@ -118,8 +118,9 @@
 - 1차 검사: **flagged** — cited elsewhere: 256 as 256  (모델: supported)
 - 근거로 든 문장: During pretraining, 15% of the genes within each transcriptome were masked
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: six encoder units·masked learning·15%는 P0008에 있으나 256 embedding dimensions는 없음. 그 값은 P0047('the 256 embedding dimensions for each gene')에 있음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0008** (paragraph, Geneformer architecture and pretraining)
 
@@ -130,8 +131,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: During pretraining, 15% of the genes within each transcriptome were masked
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0008** (paragraph, Geneformer architecture and pretraining)
 
@@ -142,8 +143,9 @@
 - 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
 - 근거로 든 문장: achieving 90% accuracy in cardiomyocyte classification
 
-- 판정: 
-- 메모: 
+- 판정: 맞음
+- 메모: P0029에 'overall out-of-sample accuracy of 90%' 그대로 있음. 1차 검사가 인용문을 축자로 옮기지 못해 플래그된 거짓 경보.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0029** (paragraph, In silico treatment analysis)
 
@@ -156,8 +158,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: The fine-tuned Geneformer model correctly predicted the high-confidence genes to be dosage sensitive in the specific context of fetal cerebral cells with 96% concordance with the original study.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0012** (paragraph, Gene dosage sensitivity predictions)
 
@@ -172,8 +174,9 @@
 - 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
 - 근거로 든 문장: Geneformer significantly boosted the ability to predict bivalently marked genes compared to alternative methods (AUC 0.93 and 0.48; bivalent versus unmethylated or H3K4me3-only, respectively)
 
-- 판정: 
-- 메모: 
+- 판정: 맞음
+- 메모: P0019에 'AUC 0.93 and 0.88; bivalent versus unmethylated or H3K4me3-only' 그대로 있음. 93% = 0.93.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0019** (paragraph, Chromatin dynamics predictions)
 
@@ -184,8 +187,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: We found that nearly equivalent predictive potential was retained even when reducing the fine-tuning data to only 5,000 ECs
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0022** (paragraph, Network dynamics predictions)
 
@@ -196,8 +199,9 @@
 - 1차 검사: **not_in_paragraph**
 - 근거로 든 문장: none
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: 사실은 맞음 — P0018에 'CRISPR-mediated knockout of candidate TEAD4 ... caused a significant reduction in their ability to generate contractile stress'. 인용한 P0031은 GSN·PLN이 수축력을 개선한 실험이므로 유전자도 방향도 다름. 또 'therapeutic potential'은 TEAD4가 아니라 GSN·PLN 쪽 서술.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0031** (paragraph, In silico treatment analysis)
 
@@ -208,8 +212,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: gene embeddings were robust to sequencing platform 11 , preservation method 12,13 and individual patient variability 14
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0009** (paragraph, Context awareness and batch integration)
 
@@ -222,8 +226,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: More than twice as many general cardiac ECs were needed to gain similar predictive potential as was possible from fine-tuning with the more relevant data from healthy versus dilated aortas
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0022** (paragraph, Network dynamics predictions)
 
@@ -234,8 +238,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: nearly equivalent predictive potential was retained even when reducing the fine-tuning data to only 5,000 ECs
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0022** (paragraph, Network dynamics predictions)
 
@@ -246,8 +250,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: These findings provide experimental validation in support of the utility of Geneformer as a tool for discovery of candidate therapeutic targets in human disease.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0031** (paragraph, In silico treatment analysis)
 
@@ -258,8 +262,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: pretraining with larger and more diverse corpuses consistently improved Geneformer's predictive power
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0032** (paragraph, Discussion)
 

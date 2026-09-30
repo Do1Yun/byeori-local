@@ -1274,3 +1274,46 @@ def test_the_first_pass_marks_which_claims_to_read_first(headed):
     for claim in sheet["claims"]:
         assert claim["audit"]["verdict"] in {"supported", "flagged", "not_in_paragraph",
                                              "contradicted", "unclear", "no_evidence"}
+
+
+def test_a_decimal_percentage_the_paper_printed_as_a_decimal_counts_too():
+    """HEIST's note says "82.1% Pearson" where the paper's Table 1 says 0.821."""
+    from byeori.local.audit import locate_numbers, notations
+    assert "0.821" in notations("82.1%") and "82.1%" in notations("0.821")
+    missing, elsewhere = locate_numbers("82.1% on placenta, MAGIC 74.9%",
+                                        "MAGIC | 0.749 HEIST (Fine-tuned) | 0.821")
+    assert missing == [] and elsewhere == {}, "reading 82.1% as 8,210% flagged a correct claim"
+
+
+def test_a_verdict_survives_the_sheet_being_rebuilt(tmp_path, monkeypatch):
+    from byeori.local.cli import recorded_verdicts, review_markdown
+    sheet = {"stem": "a-2020-paper", "paper_id": "abc", "revision_id": "rev", "note_sha256": "0" * 64,
+             "fields": {"title": "A paper"}, "blocks_total": 3,
+             "claims": [{"heading": "4. Key Results and Benchmarks", "claim": "It reports 28.4 BLEU",
+                         "cited": ["P0001"],
+                         "sources": [{"id": "P0001", "kind": "paragraph", "section": "R",
+                                      "text": "the paper says 28.4"}]}]}
+    path = tmp_path / "sheet.md"
+    path.write_text(review_markdown(sheet), encoding="utf-8")
+    filled = path.read_text(encoding="utf-8").replace("- 판정:", "- 판정: 맞음").replace(
+        "- 메모:", "- 메모: checked by hand\n- 판정자: 사람")
+    path.write_text(filled, encoding="utf-8")
+
+    kept = recorded_verdicts(path)
+    assert kept == {"It reports 28.4 BLEU": {"판정": "맞음", "메모": "checked by hand", "판정자": "사람"}}
+    rebuilt = review_markdown(sheet, kept)
+    assert "- 판정: 맞음" in rebuilt and "- 판정자: 사람" in rebuilt
+
+
+def test_a_verdict_is_not_carried_onto_a_claim_that_changed(tmp_path):
+    from byeori.local.cli import recorded_verdicts, review_markdown
+    base = {"stem": "a-2020-paper", "paper_id": "abc", "revision_id": "rev", "note_sha256": "0" * 64,
+            "fields": {}, "blocks_total": 1, "claims": [{"heading": "4. Key Results and Benchmarks",
+                                                        "claim": "It reports 28.4 BLEU", "cited": [],
+                                                        "sources": []}]}
+    path = tmp_path / "sheet.md"
+    path.write_text(review_markdown(base).replace("- 판정:", "- 판정: 맞음"), encoding="utf-8")
+    kept = recorded_verdicts(path)
+    changed = dict(base, claims=[dict(base["claims"][0], claim="It reports 41.8 BLEU")])
+    assert "- 판정: 맞음" not in review_markdown(changed, kept), \
+        "a rewritten claim has not been judged, whatever the old one said"

@@ -8,7 +8,7 @@
 
 ## 채우는 방법
 
-주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음**
+주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음 / 무인용**
 
 - `맞음` 수치·조건이 논문과 일치하고 인용한 문단이 그 근거를 담고 있음
 - `인용틀림` 값은 맞는데 그 값이 없는 문단을 가리킴
@@ -36,8 +36,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0001** (abstract, Abstract)
 
@@ -48,8 +48,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: We call our particular attention "Scaled Dot-Product Attention
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0016** (paragraph, Scaled Dot-Product Attention)
 
@@ -64,8 +64,9 @@
 - 1차 검사: **not_in_paragraph**
 - 근거로 든 문장: none
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: sine·cosine 사용은 인용한 P0038에 있음. 그러나 '더 긴 시퀀스로 외삽 가능'이라는 근거는 이어지는 문단에 있음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0038** (paragraph, Positional Encoding)
 
@@ -76,8 +77,9 @@
 - 1차 검사: **flagged** — cited elsewhere: 41.8 as 41.8  (모델: supported)
 - 근거로 든 문장: establishing a new state-of-the-art BLEU score of 28.4
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: 28.4는 인용한 P0055에 있음. 그러나 인용한 P0056은 영불 BLEU를 41.0이라고 적고 있고 41.8은 초록과 Table 2(P0078)에 있음. 논문 자체가 두 값을 함께 쓰고 있으나 노트는 41.0을 적은 문단을 인용함.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0055** (paragraph, Machine Translation)
 
@@ -94,8 +96,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: The Transformer follows this overall architecture using stacked self-attention and point-wise, fully connected layers for both the encoder and decoder
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0012** (paragraph, Model Architecture)
 
@@ -106,8 +108,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: The encoder is composed of a stack of N = 6 identical layers.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0013** (paragraph, Encoder and Decoder Stacks)
 
@@ -118,8 +120,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: The decoder is also composed of a stack of N = 6 identical layers.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0014** (paragraph, Encoder and Decoder Stacks)
 
@@ -130,8 +132,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: positional encodings have the same dimension d model as the embeddings
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0037** (paragraph, Positional Encoding)
 
@@ -142,8 +144,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: In this work we employ h = 8 parallel attention layers, or heads
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0025** (paragraph, Multi-Head Attention)
 
@@ -156,8 +158,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -166,8 +169,9 @@
 - 1차 검사: **flagged** — cited elsewhere: 23.75 as 23.75  (모델: supported)
 - 근거로 든 문장: establishing a new state-of-the-art BLEU score of 28.4
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: 28.4는 P0055에 있으나 ByteNet 23.75는 Table 2(P0078)에 있고 그 문단을 인용하지 않았음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0055** (paragraph, Machine Translation)
 
@@ -178,8 +182,9 @@
 - 1차 검사: **flagged** — cited elsewhere: 41.8 as 41.8, 39.2 as 39.2  (모델: not_in_paragraph)
 - 근거로 든 문장: none
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: 41.8과 Deep-Att+PosUnk 39.2는 Table 2(P0078)에 있음. 인용한 P0056은 41.0을 적고 있어 값이 어긋남.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0056** (paragraph, Machine Translation)
 
@@ -190,8 +195,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -200,8 +206,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: The big models were trained for 300,000 steps (3.5 days).
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0050** (paragraph, Hardware and Schedule)
 
@@ -216,8 +222,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: a self-attention layer connects all positions with a constant number of sequentially executed operations
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0044** (paragraph, Why Self-Attention)
 
@@ -230,8 +236,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: To improve computational performance for tasks involving very long sequences, self-attention could be restricted to considering only a neighborhood of size r in the input sequence centered around the respective output position.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0044** (paragraph, Why Self-Attention)
 
@@ -242,8 +248,9 @@
 - 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
 - 근거로 든 문장: We plan to apply them to other tasks. We plan to extend the Transformer to problems involving input and output modalities other than text
 
-- 판정: 
-- 메모: 
+- 판정: 맞음
+- 메모: P0069에 'extend the Transformer to problems involving input and output modalities other than text ... such as images, audio and video'가 그대로 있음. 1차 검사의 인용문 축자 실패.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0069** (paragraph, Conclusion)
 
@@ -254,8 +261,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: bigger models are better
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0061** (paragraph, Model Variations)
 

@@ -8,7 +8,7 @@
 
 ## 채우는 방법
 
-주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음**
+주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음 / 무인용**
 
 - `맞음` 수치·조건이 논문과 일치하고 인용한 문단이 그 근거를 담고 있음
 - `인용틀림` 값은 맞는데 그 값이 없는 문단을 가리킴
@@ -36,8 +36,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: we assembled scRNA-seq data from 33 million human cells under normal (non-disease) conditions
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0005** (paragraph, Body)
 
@@ -48,8 +48,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scGPT achieved high precision (>0.8) for most cell types shown in the confusion matrix
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0006** (paragraph, scGPT improves the precision of cell type annotation)
 
@@ -61,11 +61,12 @@
 
 ### 3. **Perturbation prediction**: Outperformed GEARS and linear regression baselines by 5–20% margins in Perturb-seq datasets, predicting 91.4% of relevant perturbations in top 1 predictions.
 
-- 1차 검사: **flagged** — cited elsewhere: 20% as 20%  (모델: supported)
+- 1차 검사: **flagged** — cited elsewhere: 20% as 0.2/20%  (모델: supported)
 - 근거로 든 문장: scGPT identified on average 91.4% relevant perturbations (6.4 of seven) within the top 1 predictions
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: 91.4%는 인용한 P0023에 있음('91.4% relevant perturbations (6.4 of seven) within the top 1 predictions'). 그러나 '5–20% 마진'은 인용한 P0014·P0023에 없고 논문 다른 곳에 있음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0014** (paragraph, Prediction of unseen gene perturbations.)
 
@@ -80,8 +81,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: with an AvgBIO score of 0.821, which was 5-10% higher than that of the compared methods
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0024** (paragraph, scGPT enables multi-batch and multi-omic integration)
 
@@ -92,8 +93,9 @@
 - 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
 - 근거로 든 문장: scGPT uncovers valuable biological insights into gene-gene interactions specific to various conditions, such as cell types and perturbation states.
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: 앞부분(gene embeddings·attention weights로 세포유형별 유전자 상호작용)은 P0012가 뒷받침함. 그러나 'TCR signaling·MHC class II antigen presentation'은 P0028에 있고 그 문단을 인용하지 않았음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0012** (paragraph, scGPT predicts unseen genetic perturbation responses)
 
@@ -110,8 +112,9 @@
 - 1차 검사: **flagged** — cited elsewhere: 512 as 512, 12 as 12  (모델: not_in_paragraph)
 - 근거로 든 문장: none
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: 512·12·8 중 어느 것도 인용한 P0011·P0017에 없음. 512와 12는 논문 다른 곳에 있음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0011** (paragraph, scGPT predicts unseen genetic perturbation responses)
 
@@ -126,8 +129,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Variations in sequencing depths and the presence of sparsely expressed genes result in substantial differences in data scales among different batches of sequencing samples.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0043** (paragraph, Expression values.)
 
@@ -142,8 +145,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Attention is only applied between the known genes and the query unknown gene itself but not to the positions of other unknown genes.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0063** (paragraph, QK T)
 
@@ -158,8 +161,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: GEP presents a general self-supervised fine-tuning objective that aims to forecast gene expression values.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0071** (paragraph, Fine-tuning objectives)
 
@@ -174,8 +177,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: This serves as a technique to facilitate batch correction.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0052** (paragraph, Cell representation.)
 
@@ -192,8 +195,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scGPT constantly outperformed the other methods in all classification metrics, including accuracy, precision, recall and macro F1
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0006** (paragraph, scGPT improves the precision of cell type annotation)
 
@@ -212,8 +215,9 @@
 - 1차 검사: **flagged** — cited elsewhere: 0.98 as 0.98  (모델: supported)
 - 근거로 든 문장: scGPT excelled in predicting post-perturbation changes, consistently outperforming the others by 5-20% margins.
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: 0.98은 논문에 있으나(P0018) 인용한 P0016은 그림 라벨 더미이고 P0023은 역방향 perturbation 예시임. 세션 초반에 사람이 읽어 확인한 항목.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0016** (paragraph, Prediction of unseen gene perturbations.)
 
@@ -228,8 +232,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: with an AvgBIO score of 0.821, which was 5-10% higher than that of the compared methods
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0024** (paragraph, scGPT enables multi-batch and multi-omic integration)
 
@@ -240,8 +244,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scGPT uniquely identified an additional 22 pathways, 14 of which were immune related.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0028** (paragraph, scGPT uncovers gene networks for specific cell states)
 
@@ -252,8 +256,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scGPT presented more defined cluster structures than Seurat (v.4), with a 9% improvement in the AvgBIO score.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0026** (paragraph, Single-cell multi-omic integration.)
 
@@ -266,8 +270,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: fewer than 50 cells belong to mast and major histocompatibility (MHC) class II cell types out of the 10,600 cells in the reference set.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0006** (paragraph, scGPT improves the precision of cell type annotation)
 
@@ -278,8 +282,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Notably, the current pretraining does not inherently mitigate batch effects
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0037** (paragraph, Discussion)
 
@@ -290,8 +294,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Notably, the current pretraining does not inherently mitigate batch effects, and thus the model's zero-shot performance could be constrained on datasets with substantial technical variation.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0037** (paragraph, Discussion)
 
@@ -302,8 +306,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: we plan to pretrain on a larger-scale dataset with more diversity, including multi-omic data, spatial omics and various diseased conditions
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0038** (paragraph, Discussion)
 

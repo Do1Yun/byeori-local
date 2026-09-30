@@ -8,7 +8,7 @@
 
 ## 채우는 방법
 
-주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음**
+주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음 / 무인용**
 
 - `맞음` 수치·조건이 논문과 일치하고 인용한 문단이 그 근거를 담고 있음
 - `인용틀림` 값은 맞는데 그 값이 없는 문단을 가리킴
@@ -36,8 +36,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Each time the proposed model generates a word in a translation, it (soft-)searches for a set of positions in a source sentence where the most relevant information is concentrated.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0005** (paragraph, INTRODUCTION)
 
@@ -48,8 +48,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: the proposed RNNsearch outperforms the conventional RNNencdec
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0040** (paragraph, QUANTITATIVE RESULTS)
 
@@ -64,8 +64,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: the performance of the RNNsearch is as high as that of the conventional phrase-based translation system (Moses)
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0040** (paragraph, QUANTITATIVE RESULTS)
 
@@ -76,8 +76,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: the alignment model directly computes a soft alignment, which allows the gradient of the cost function to be backpropagated through
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0025** (paragraph, LEARNING TO ALIGN AND TRANSLATE)
 
@@ -90,8 +90,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: we propose to use a bidirectional RNN (BiRNN, Schuster and Paliwal, 1997)
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0028** (paragraph, ENCODER: BIDIRECTIONAL RNN FOR ANNOTATING SEQUENCES)
 
@@ -102,8 +102,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: where e ij = a(s i-1 , h j ) is an alignment model which scores how well the inputs around position j and the output at position i match
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0024** (paragraph, LEARNING TO ALIGN AND TRANSLATE)
 
@@ -114,8 +114,9 @@
 - 1차 검사: **not_in_paragraph**
 - 근거로 든 문장: none
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: 인용한 P0022는 문맥벡터가 annotation의 가중합이라는 문장뿐임. α가 RNN 은닉상태와 annotation에서 유도된다는 정렬 모델 설명은 이어지는 문단에 있음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0022** (paragraph, LEARNING TO ALIGN AND TRANSLATE)
 
@@ -126,8 +127,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: We train each model twice: first with the sentences of length up to 30 words (RNNencdec-30, RNNsearch-30) and then with the sentences of length up to 50 word (RNNencdec-50, RNNsearch-50).
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0035** (paragraph, MODELS)
 
@@ -140,8 +141,9 @@
 - 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
 - 근거로 든 문장: RNNsearch-50 achieves 26.75 BLEU score on all sentences and 34.16 on sentences without unknown words, compared to RNNencdec-50’s 17.82 and 26.71, respectively.
 
-- 판정: 
-- 메모: 
+- 판정: 맞음
+- 메모: 인용한 P0097이 Table 1이고 RNNencdec-50 17.82|26.71, RNNsearch-50 26.75|34.16이 짝까지 정확히 있음. 1차 검사의 인용문 축자 실패.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0097** (table, Body)
 
@@ -152,8 +154,9 @@
 - 1차 검사: **flagged** — cited elsewhere: 50 as 50, 34.16 as 34.16, 35.63 as 35.63  (모델: supported)
 - 근거로 든 문장: the performance of the RNNsearch is as high as that of the conventional phrase-based translation system (Moses)
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: 정성 서술('RNNsearch is as high as Moses when only sentences consisting of known words are considered')은 인용한 P0040에 있음. 그러나 34.16·35.63은 Table 1(P0097)에 있고 그 문단을 인용하지 않았음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0040** (paragraph, QUANTITATIVE RESULTS)
 
@@ -164,8 +167,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: The RNNsearch was able to correctly align [zone] with [Area], jumping over the two words ([European] and [Economic]), and then looked one word back at a time to complete the whole phrase [zone économique européenne].
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0043** (paragraph, ALIGNMENT)
 
@@ -176,8 +179,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: RNNsearch-50, especially, shows no performance deterioration even with sentences of length 50 or more.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0041** (paragraph, QUANTITATIVE RESULTS)
 
@@ -190,8 +193,9 @@
 - 1차 검사: **not_in_paragraph**
 - 근거로 든 문장: none
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: 미지 단어가 있으면 성능이 낮다는 근거는 Table 1(P0097)의 All 대 No UNK 열임. 인용한 P0040은 'known words만 고려하면 Moses와 대등하다'는 서술이라 이 주장을 직접 진술하지 않음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0040** (paragraph, QUANTITATIVE RESULTS)
 
@@ -202,8 +206,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: However, this may limit the applicability of the proposed scheme to other tasks.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0060** (paragraph, LEARNING TO ALIGN)
 
@@ -214,8 +218,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: One of challenges left for the future is to better handle unknown, or rare words.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0068** (paragraph, CONCLUSION)
 

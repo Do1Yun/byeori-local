@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import sys
 
@@ -41,10 +42,27 @@ def build_service(args=None, *, create=False):
         os.environ.get("BYEORI_GROBID_URL", "http://127.0.0.1:8070")), lookup=lookup)
 
 
-VERDICTS = "맞음 / 인용틀림 / 수치틀림 / 근거없음"
+VERDICTS = "맞음 / 인용틀림 / 수치틀림 / 근거없음 / 무인용"
 
 
-def review_markdown(sheet):
+def recorded_verdicts(path):
+    """Verdicts already written into a sheet, keyed by the claim each was reached on.
+
+    Keyed by the claim's text rather than its number: a rebuilt sheet may number claims
+    differently, and a verdict a person reached has to survive the sheet being rebuilt.
+    """
+    if not path or not Path(path).exists():
+        return {}
+    kept = {}
+    for chunk in re.split(r"(?m)^### ", Path(path).read_text(encoding="utf-8"))[1:]:
+        claim = re.sub(r"^\d+\.\s*", "", chunk.splitlines()[0]).strip()
+        fields = dict(re.findall(r"(?m)^- (판정|메모|판정자): (\S.*)$", chunk))
+        if fields.get("판정"):
+            kept[claim] = fields
+    return kept
+
+
+def review_markdown(sheet, kept=None):
     """The sheet as something a person can read and fill in, one claim at a time."""
     fields = sheet["fields"]
     lines = [f"# 검토표: {sheet['stem']}", "",
@@ -90,7 +108,12 @@ def review_markdown(sheet):
                       + (f"  (모델: {check['model_verdict']})"
                          if check["model_verdict"] and check["model_verdict"] != check["verdict"] else ""),
                       f"- 근거로 든 문장: {check['quote'] or '-'}", ""]
-        lines += [f"- 판정: ", f"- 메모: ", ""]
+        previous = (kept or {}).get(claim["claim"].strip(), {})
+        lines += [f"- 판정: {previous.get('판정', '')}".rstrip(),
+                  f"- 메모: {previous.get('메모', '')}".rstrip()]
+        if previous.get("판정자"):
+            lines.append(f"- 판정자: {previous['판정자']}")
+        lines.append("")
         if not claim["cited"]:
             lines += ["> 인용 없음", ""]
         for source in claim["sources"]:
@@ -170,8 +193,11 @@ def main(argv=None):
                          else service.review_sheet(args.paper_id, args.revision))
                 if args.out:
                     args.out.parent.mkdir(parents=True, exist_ok=True)
-                    args.out.write_text(review_markdown(sheet), encoding="utf-8")
-                    result = {"written": str(args.out), "claims": len(sheet["claims"])}
+                    kept = recorded_verdicts(args.out)
+                    args.out.parent.mkdir(parents=True, exist_ok=True)
+                    args.out.write_text(review_markdown(sheet, kept), encoding="utf-8")
+                    result = {"written": str(args.out), "claims": len(sheet["claims"]),
+                              "kept_verdicts": len(kept)}
                     if sheet.get("counts"):
                         result["counts"] = sheet["counts"]
                 else:

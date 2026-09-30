@@ -33,7 +33,9 @@ unclear - the paragraphs are too damaged or fragmentary to tell."""
 VERDICTS = ("supported", "not_in_paragraph", "contradicted", "unclear")
 # Values a claim asserts: decimals, percentages, and counts of two digits or more. A single digit
 # is too often a section number or a figure panel to be worth checking.
-CLAIM_NUMBER = re.compile(r"\d+\.\d+|\d+%|\b\d{2,}\b")
+# The percentage form is matched first, or "82.1%" is read as the bare 82.1 and converted as if
+# it meant 8,210%.
+CLAIM_NUMBER = re.compile(r"\d+(?:\.\d+)?\s?%|\d+\.\d+|\b\d{2,}\b")
 MIN_QUOTE_CHARS = 12
 
 
@@ -45,20 +47,22 @@ def comparable(text):
 def notations(number):
     """The ways a paper may print the value a claim states.
 
-    Geneformer's note says "91% AUC" where the paper says "AUC 0.91", and a check that reads only
-    the digits it was given calls a correct claim unsupported. Measured on this paper, that was
-    four of six flags.
+    Geneformer's note says "91% AUC" where the paper says "AUC 0.91", and HEIST's says "82.1%
+    Pearson correlation" where the paper's Table 1 says 0.821. Converting only whole percentages
+    left the second kind flagged: of five flags checked by reading, that was the one that was
+    wrong, and it would have been wrong for every decimal percentage in the set.
     """
     forms = {number}
-    if number.endswith("%"):
-        digits = number[:-1]
-        if digits.isdigit():
-            forms |= {f"0.{digits}", f".{digits}", f"{digits} %"}
-    elif number.startswith("0."):
-        decimals = number[2:]
-        if decimals.isdigit():
-            forms |= {f"{decimals}%", f"{decimals} %"}
-    return forms
+    try:
+        if number.endswith("%"):
+            value = float(number[:-1]) / 100
+            forms |= {f"{value:g}", f"{value:.4f}".rstrip("0"), f"{number[:-1]} %"}
+        elif "." in number:
+            percent = float(number) * 100
+            forms |= {f"{percent:g}%", f"{percent:g} %"}
+    except ValueError:
+        pass
+    return {form for form in forms if form}
 
 
 def locate_numbers(claim, evidence, whole=""):

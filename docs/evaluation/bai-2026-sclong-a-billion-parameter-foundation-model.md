@@ -8,7 +8,7 @@
 
 ## 채우는 방법
 
-주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음**
+주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음 / 무인용**
 
 - `맞음` 수치·조건이 논문과 일치하고 인용한 문단이 그 근거를 담고 있음
 - `인용틀림` 값은 맞는데 그 값이 없는 문단을 가리킴
@@ -36,8 +36,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scLong includes a gene encoder, an expression encoder, and a contextual encoder.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0005** (paragraph, scLong overview)
 
@@ -48,8 +48,9 @@
 - 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
 - 근거로 든 문장: Gene Ontology domains (Biological Process, Molecular Function, Cellular Component) are embedded into gene representations via a GCN
 
-- 판정: 
-- 메모: 
+- 판정: 맞음
+- 메모: P0006에 'The gene encoder constructs a gene graph using the GO and applies a GCN'과 Biological Process·Molecular Function·Cellular Component 세 도메인이 모두 있음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0006** (paragraph, scLong overview)
 
@@ -60,8 +61,9 @@
 - 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
 - 근거로 든 문장: LEGs play essential roles in a range of biological processes and cannot be disregarded
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: LEG가 조절 기제에서 중요하다는 서술은 인용한 P0008에 있음. 그러나 '명시적으로 모델링해 GRN 추론과 batch 통합을 개선'은 P0008에 없음 — 그 문단은 동기 서술임.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0008** (paragraph, scLong overview)
 
@@ -72,8 +74,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scLong, a scRNA-seq foundation model with one billion parameters pretrained on 48 million cells, captures long-range context across 27,874 genes
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0010** (paragraph, scLong overview)
 
@@ -84,8 +86,9 @@
 - 1차 검사: **flagged** — cited elsewhere: 0.652 as 0.652  (모델: supported)
 - 근거로 든 문장: scLong outperformed all baselines (Fig. 4b), with a Pearson correlation score of 0.878, surpassing Geneformer's score of 0.852 (P = 0.001), scGPT's 0.841 (P = 0.001), scFoundation's 0.867 (P = 0.025), UCE's 0.837 (P = 0.001), DeepCDR's 0.837 (P = 0.001), and the linear model's 0.746 (P < 0.001) (Supplementary Table 3).
 
-- 판정: 
-- 메모: 
+- 판정: 수치틀림
+- 메모: Pearson 0.625(P0014)와 AUPR 1.35(P0026)는 인용 문단에 있음. 그러나 인용한 P0021은 IC50 회귀 과제 설명이고 AUC를 보고하지 않으며, 'AUC 0.652–0.878'의 상한 0.878은 perturbation 범위의 상한과 같아 값을 재사용한 것으로 보임.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0014** (paragraph, scLong predicts transcriptional outcomes of genetic perturbations)
 
@@ -106,8 +109,9 @@
 - 1차 검사: **flagged** — 1280 is nowhere in the paper  (모델: supported)
 - 근거로 든 문장: First, we rank the elements in the gene expression vector in descending order of expression values and select the top 4096 with the highest values for processing by the large Performer encoder.
 
-- 판정: 
-- 메모: 
+- 판정: 수치틀림
+- 메모: large·mini Performer 사용과 top 4096은 인용한 P0056에 있음. 그러나 42 layers·32 heads·hidden dim 1280·2 layers·8 heads·200은 없고 1280은 논문 어디에도 없음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0056** (paragraph, scLong model architecture)
 
@@ -118,8 +122,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: for each gene u, we select the top 20 genes v i with the highest J u, v i values and connect them to u.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0053** (paragraph, scLong model architecture)
 
@@ -130,8 +134,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: 15% of the non-zero values in each input gene expression vector were randomly masked
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0057** (paragraph, scLong pretraining)
 
@@ -146,8 +150,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Each vector is subsequently passed through a three-layer MLP with hidden dimensions of 200, 400, and 200
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0061** (paragraph, Prediction of transcriptional responses to genetic perturbations)
 
@@ -158,8 +162,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: These representations are passed through a multi-head cross-attention module 13 , combined with embeddings of cell line indices and dosage information
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0019** (paragraph, scLong predicts transcriptional outcomes of chemical perturbations)
 
@@ -172,8 +176,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -182,8 +187,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scLong achieved a Pearson correlation of 0.625, compared to 0.561 (P = 0.001
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0014** (paragraph, scLong predicts transcriptional outcomes of genetic perturbations)
 
@@ -194,8 +199,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: In the Seen 0/2 scenario, scLong obtained an MSE of 0.170, while the baseline models recorded errors of 0.218 (P = 0.001)
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0014** (paragraph, scLong predicts transcriptional outcomes of genetic perturbations)
 
@@ -206,8 +211,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: with an AUROC score of 0.652, surpassing Geneformer's score of 0.635 (P = 0.006)
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0023** (paragraph, scLong predicts cancer drug response)
 
@@ -218,8 +223,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -228,8 +234,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scLong outperformed all baselines (Fig. 4b), with a Pearson correlation score of 0.878, surpassing Geneformer's score of 0.852 (P = 0.001)
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0021** (paragraph, scLong predicts cancer drug response)
 
@@ -240,8 +246,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -250,8 +257,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scLong achieved an AUPR of 1.35, significantly surpassing Geneformer (1.12, P < 0.001)
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0026** (paragraph, scLong infers gene regulatory networks)
 
@@ -262,8 +269,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -272,8 +280,9 @@
 - 1차 검사: **flagged** — cited elsewhere: 0.001 as 0.001; the quoted support is not in the paragraphs  (모델: supported)
 - 근거로 든 문장: scLong achieved a batch ASW score of 0.96, markedly surpassing all baselines (Fig. 6), including UCE (0.83)
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: batch ASW 0.96과 UCE 0.83은 인용한 P0030에 그대로 있음. 그러나 'P<0.001'은 P0030에 없음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0030** (paragraph, scLong supports zero-shot batch integration)
 
@@ -286,8 +295,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -296,8 +306,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: The model's billion-parameter architecture, although optimized for efficiency, still demands significant computational resources for training and inference
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0044** (paragraph, Discussion)
 
@@ -308,8 +318,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scLong relies on static, predefined relationships from sources like the GO, which, while providing valuable contextual information, may restrict adaptability to dynamic gene interactions and condition-specific regulatory changes not represented in these databases.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0044** (paragraph, Discussion)
 
@@ -320,8 +330,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Another limitation is the potential sensitivity of scLong's performance to the choice of high-and low-expression gene thresholds in its dual encoder design
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0044** (paragraph, Discussion)
 
@@ -332,8 +342,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -342,8 +353,9 @@
 - 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
 - 근거로 든 문장: incorporate of additional biological datasets, such as pathway databases 58 , protein-protein interaction networks 59 , and epigenetic data 60
 
-- 판정: 
-- 메모: 
+- 판정: 맞음
+- 메모: P0045에 'pathway databases, protein-protein interaction networks, and epigenetic data'가 그대로 있음. 인용문 축자 실패.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0045** (paragraph, Discussion)
 
@@ -354,8 +366,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: integrate more advanced explainability techniques, such as attention-based visualization tools or saliency maps 61
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0045** (paragraph, Discussion)
 
@@ -366,8 +378,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: exploring methods to reduce the computational demands of training and deploying scLong, such as model pruning 62 or distillation 63
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0045** (paragraph, Discussion)
 

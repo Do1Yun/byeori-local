@@ -8,7 +8,7 @@
 
 ## 채우는 방법
 
-주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음**
+주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음 / 무인용**
 
 - `맞음` 수치·조건이 논문과 일치하고 인용한 문단이 그 근거를 담고 있음
 - `인용틀림` 값은 맞는데 그 값이 없는 문단을 가리킴
@@ -36,8 +36,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scFoundation is a large-scale model in terms of the size of trainable parameters, dimensionality of genes and volume of training data.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0001** (paragraph, Body)
 
@@ -48,8 +48,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: The asymmetric encoder-decoder architecture had a similar form to the masked autoencoder
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0012** (paragraph, The scFoundation pretraining framework)
 
@@ -60,8 +60,9 @@
 - 1차 검사: **not_in_paragraph**
 - 근거로 든 문장: none
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: RDA 모델링 설명은 인용한 P0013에 있음. 그러나 'scVI·SAVER 같은 imputation 방법보다 우수'라는 비교는 P0013에 없고 P0016에 있음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0013** (paragraph, The scFoundation pretraining framework)
 
@@ -69,11 +70,12 @@
 
 ### 4. **Scalable read-depth enhancement**: Reduced MAE and MRE by up to 50% in low-read-depth scenarios, with performance plateauing at T/S ratios >3.5.
 
-- 1차 검사: **flagged** — 50% is nowhere in the paper; cited elsewhere: 3.5 as 3.5  (모델: supported)
+- 1차 검사: **flagged** — cited elsewhere: 50% as 0.5, 3.5 as 3.5  (모델: supported)
 - 근거로 든 문장: scFoundation demonstrated a notable reduction of half the MAE and MRE from the downsampled data even when the downsampling rate was below 10%.
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: 인용한 P0008은 MAE·MRE 측정과 1/5/10/20% 다운샘플링을 설명하지만 '최대 50% 감소'와 'T/S 3.5 이상에서 평탄화'는 없음. 평탄화는 P0016에 있음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0008** (paragraph, Scalable read-depth enhancement model without fine-tuning)
 
@@ -84,8 +86,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scFoundation had a higher SIL score, showing its generalization ability in non-fine-tuning mode
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0020** (paragraph, The scFoundation pretraining framework)
 
@@ -98,8 +100,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: aligned all data to a gene list composed of 19,264 protein-coding and common mitochondrial genes
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0005** (paragraph, Body)
 
@@ -110,8 +112,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: We developed xTrimoGene, a scalable transformer-based model with strategies for both algorithmic efficiency and engineering acceleration 18 . It included an embedding module and an asymmetric encoderdecoder structure.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0012** (paragraph, The scFoundation pretraining framework)
 
@@ -122,8 +124,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: We treated the total count as one cell's read depth and defined two total counts indicators: T ('target') and S ('source'), for the total counts of the raw and the input samples
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0013** (paragraph, The scFoundation pretraining framework)
 
@@ -134,8 +136,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: We downsampled the total counts to 1%, 5%, 10% and 20% of the original profiles
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0008** (paragraph, Scalable read-depth enhancement model without fine-tuning)
 
@@ -146,8 +148,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: cell-level tasks including clustering (within and across datasets), bulk and single-cell level drug response prediction and cell type annotation
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0006** (paragraph, Body)
 
@@ -160,8 +162,9 @@
 - 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
 - 근거로 든 문장: scFoundation's performance reached a plateau on higher T/S folds, indicating the cell embeddings were not sensitive to the value of T higher than 3.5S.
 
-- 판정: 
-- 메모: 
+- 판정: 수치틀림
+- 메모: P0016은 T=S일 때 scFoundation이 SAVER보다 '낮은' 성능이었고 T/S가 커지면서 앞섰다고 함. 노트는 그 조건을 빼고 'SAVER보다 우수'라고 단정함. 또 P0016은 T가 3.5S를 넘으면 성능이 '평탄해진다'고 하는데 노트는 'SIL 값이 더 높다'로 바꿔 씀.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0016** (paragraph, The scFoundation pretraining framework)
 
@@ -169,11 +172,12 @@
 
 ### 12. **Drug response prediction**: Achieved PCC >0.93 for IC50 predictions, outperforming baseline models by 0.2–0.7 in AUC for drugs like PHA-793887.
 
-- 1차 검사: **flagged** — cited elsewhere: 0.2 as 0.2  (모델: supported)
+- 1차 검사: **flagged** — cited elsewhere: 0.2 as 0.2/20%  (모델: supported)
 - 근거로 든 문장: the scFoundation-based DeepCDR model could predict accurate values and achieved a PCC above 0.93
 
-- 판정: 
-- 메모: 
+- 판정: 수치틀림
+- 메모: PCC 0.93 이상은 P0025에 있음. 그러나 PHA-793887의 개선은 PCC 0.07→0.73이고 노트가 말한 'AUC에서 0.2–0.7'은 지표도 값도 다름.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0025** (paragraph, Improving cancer drug response prediction)
 
@@ -181,11 +185,12 @@
 
 ### 13. **Perturbation prediction**: scFoundation-based GEARS model reduced MSE by 15–20% compared to baseline, with higher accuracy in predicting gene expression distributions.
 
-- 1차 검사: **flagged** — cited elsewhere: 15 as 15, 20% as 20%  (모델: supported)
+- 1차 검사: **flagged** — cited elsewhere: 15 as 15, 20% as 0.2/20%  (모델: supported)
 - 근거로 든 문장: The scFoundation-based model achieved lower MSE values compared with the original GEARS baseline model.
 
-- 판정: 
-- 메모: 
+- 판정: 수치틀림
+- 메모: MSE가 GEARS 기준선보다 낮다는 정성 서술은 P0036에 있음. 그러나 '15–20% 감소'는 없음. 논문의 20은 'top 20 DE genes'를 가리킴.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0036** (paragraph, Facilitating perturbation response prediction)
 
@@ -196,8 +201,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Gene enrichment analysis validated that the identified gene modules were enriched in their respective cell types
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0041** (paragraph, Inferring gene modules and gene regulation networks)
 
@@ -208,8 +213,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: slightly reducing the dispersion of different cell types
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0021** (paragraph, The scFoundation pretraining framework)
 
@@ -222,8 +227,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Although the pretraining data contained virtually all human scRNA-seq data publicly available at the time of our curation, they may still not be sufficient to fully reflect the complexity of human organ development and health states.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0045** (paragraph, Discussion)
 
@@ -234,8 +239,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: The pretraining demands substantial computational resources, requiring further optimization for efficiency.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0045** (paragraph, Discussion)
 
@@ -246,8 +251,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: The current model focused on transcriptomic data only, and did not include genomic or epigenomic data.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0045** (paragraph, Discussion)
 
@@ -258,8 +263,9 @@
 - 1차 검사: **not_in_paragraph**
 - 근거로 든 문장: none
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: 더 큰 모델·multiomics 통합은 인용한 P0046에 있음. 'metadata로 세포-표현형 연결'은 P0046에 없고 P0045에 있으므로 인용이 그 문단을 가리키지 않음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0046** (paragraph, Discussion)
 
@@ -270,8 +276,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: designing more effective pretraining tasks could potentially improve the model's performance 29
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0046** (paragraph, Discussion)
 

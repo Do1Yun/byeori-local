@@ -8,7 +8,7 @@
 
 ## 채우는 방법
 
-주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음**
+주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음 / 무인용**
 
 - `맞음` 수치·조건이 논문과 일치하고 인용한 문단이 그 근거를 담고 있음
 - `인용틀림` 값은 맞는데 그 값이 없는 문단을 가리킴
@@ -36,8 +36,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Modeling inter-cellular and hierarchical effects of co-expression networks: HEIST is the first foundation model for spatial omics to explicitly incorporate co-expression networks alongside spatial graphs in a hierarchical graph
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0006** (paragraph, INTRODUCTION)
 
@@ -48,8 +48,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Using biologically motivated hierarchical modeling, HEIST captures fine-grained gene co-expression within cells and long-range cellular interactions through novel cross-level message passing, producing biologically contextualized embeddings.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0007** (paragraph, INTRODUCTION)
 
@@ -60,8 +60,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: HEIST is trained in a self-supervised manner on a large-scale corpus of spatial transcriptomics data comprising over 22.3M cells spanning 15 organs and 124 tissues
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0008** (paragraph, INTRODUCTION)
 
@@ -74,8 +74,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -84,8 +85,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: We create the spatial cell-cell graph by computing Voronoi polygons from cell coordinates and connecting cells in adjacent polygons.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0011** (paragraph, Hierarchical Graph Construction.)
 
@@ -96,8 +97,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Intra-level message passing (Equation 1) within each graph, followed by cross-level message passing (Equation 2) to integrate multi-modal information.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0013** (paragraph, Hierarchical Graph Construction.)
 
@@ -108,8 +109,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: HEIST incorporates positional encodings (PE) at both the cell and gene levels to inject spatial and coexpression structure into the learned representations.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0066** (paragraph, C.1 POSITIONAL ENCODINGS)
 
@@ -120,8 +121,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: masked auto-encoding loss to improve reconstruction and robustness
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0029** (paragraph, Masked-auto encoding.)
 
@@ -131,11 +132,11 @@
 
 ### 9. **Gene imputation**: HEIST achieves 82.1% Pearson correlation on placenta data (fine-tuned) and 80.7% on skin data, outperforming MAGIC (74.9%) and CellPLM (80.1%).
 
-- 1차 검사: **flagged** — 82.1, 80.7, 74.9, 80.1 is nowhere in the paper  (모델: supported)
+- 1차 검사: **supported**
 - 근거로 든 문장: HEIST (Fine-tuned) | 0.821 ± 0.041 0.807 ± 0.020
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0113** (table, Body)
 
@@ -146,8 +147,9 @@
 - 1차 검사: **flagged** — cited elsewhere: 0.984 as 0.984, 0.930 as 0.930  (모델: not_in_paragraph)
 - 근거로 든 문장: none
 
-- 판정: 
-- 메모: 
+- 판정: 수치틀림
+- 메모: 0.995는 논문에 있으나(P0100) 그것은 ligand-receptor pair 예측의 AUC-ROC이고 임상 결과 예측이 아님. 과제를 잘못 붙였으므로 단순 인용 오류가 아님.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0100** (paragraph, PE ablation.)
 
@@ -155,11 +157,11 @@
 
 ### 11. **Cell type annotation**: HEIST achieves 99.5% F1 score on SEA-AD data, outperforming SCFoundation (0.2495) and CellPLM (0.6701).
 
-- 1차 검사: **flagged** — 99.5 is nowhere in the paper  (모델: supported)
+- 1차 검사: **supported**
 - 근거로 든 문장: HEIST | 0.5126 ± 0.1170 0.9953 ± 0.0158 0.5340 ± 0.1293 0.2826 ± 0.0758 0.1124 ± 0.0521
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0115** (table, Body)
 
@@ -170,8 +172,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: HEIST demonstrates significant computational advantages, achieving 8× faster embedding extraction time compared to SCGPT-SPATIAL and 48× faster than SCFOUNDATION.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0032** (paragraph, Masked-auto encoding.)
 
@@ -184,8 +186,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: the current gene co-expression network construction relies on co-expression relationships using mutual information, which may not fully capture causal gene co-expression mechanisms or directional influences
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0105** (paragraph, F LIMITATIONS)
 
@@ -196,8 +198,9 @@
 - 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
 - 근거로 든 문장: incorporating temporal dynamics by applying techniques such as Granger causality over inferred pseudotime trajectories
 
-- 판정: 
-- 메모: 
+- 판정: 맞음
+- 메모: P0105 전문에 세 요소가 모두 있음: 'Granger causality ... over inferred pseudotime trajectories', 'integrating more sophisticated gene co-expression network inference techniques', 'Extending HEIST to model spatio-temporal transcriptomics data'. 1차 검사의 인용문 축자 실패.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0105** (paragraph, F LIMITATIONS)
 

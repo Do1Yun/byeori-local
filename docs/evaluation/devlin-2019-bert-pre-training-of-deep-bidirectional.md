@@ -8,7 +8,7 @@
 
 ## 채우는 방법
 
-주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음**
+주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음 / 무인용**
 
 - `맞음` 수치·조건이 논문과 일치하고 인용한 문단이 그 근거를 담고 있음
 - `인용틀림` 값은 맞는데 그 값이 없는 문단을 가리킴
@@ -36,8 +36,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -46,8 +47,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: obtains new state-of-the-art results on eleven natural language processing tasks, including pushing the GLUE score to 80.5% (7.7% point absolute improvement), MultiNLI accuracy to 86.7% (4.6% absolute improvement), SQuAD v1.1 question answering Test F1 to 93.2 (1.5 point absolute improvement) and SQuAD v2.0 Test F1 to 83.1 (5.1 point absolute improvement)
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0002** (abstract, Abstract)
 
@@ -58,8 +59,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: BERT is the first finetuning based representation model that achieves state-of-the-art performance on a large suite of sentence-level and token-level tasks, outperforming many task-specific architectures.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0008** (paragraph, Introduction)
 
@@ -70,8 +71,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: A distinctive feature of BERT is its unified architecture across different tasks.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0022** (paragraph, BERT)
 
@@ -84,8 +85,9 @@
 - 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
 - 근거로 든 문장: We primarily report results on two model sizes: BERT BASE (L=12, H=768, A=12, Total Parameters=110M) and BERT LARGE (L=24, H=1024, A=16, Total Parameters=340M).
 
-- 판정: 
-- 메모: 
+- 판정: 맞음
+- 메모: P0023이 multi-layer bidirectional Transformer encoder와 L·H·A 표기를 정의하고 두 모델 크기를 보고함. 수치 검사가 어느 값도 누락으로 잡지 않았으므로 12·768·110M 등이 인용 문단에 있음. 인용문 축자 실패.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0023** (paragraph, BERT)
 
@@ -96,8 +98,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: our input representation is able to unambiguously represent both a single sentence and a pair of sentences
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0024** (paragraph, BERT)
 
@@ -108,8 +110,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -118,8 +121,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: In all of our experiments, we mask 15% of all WordPiece tokens in each sequence at random.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0030** (paragraph, Pre-training BERT)
 
@@ -130,8 +133,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: 50% of the time B is the actual next sentence that follows A (labeled as IsNext), and 50% of the time it is a random sentence from the corpus (labeled as NotNext)
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0032** (paragraph, Pre-training BERT)
 
@@ -142,8 +145,9 @@
 - 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
 - 근거로 든 문장: For each task, we simply plug in the task-specific inputs and outputs into BERT and fine-tune all the parameters end-to-end.
 
-- 판정: 
-- 메모: 
+- 판정: 맞음
+- 메모: P0038에 'finetune all the parameters end-to-end', 'token representations are fed into an output layer for tokenlevel tasks, such as ... question answering', '[CLS] representation is fed into an output layer for classification'이 그대로 있음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0038** (paragraph, Fine-tuning BERT)
 
@@ -153,11 +157,12 @@
 
 ### 11. **GLUE Benchmark**: BERT BASE improves average accuracy by 4.5% over prior SOTA, reaching 84.4% on MNLI and 92.7% on SST-2. BERT LARGE achieves 86.7% MNLI accuracy and 94.9% SST-2 accuracy.
 
-- 1차 검사: **flagged** — cited elsewhere: 84.4 as 84.4, 92.7 as 92.7, 86.7 as 86.7, 94.9 as 94.9  (모델: supported)
+- 1차 검사: **flagged** — 84.4%, 92.7%, 94.9% is nowhere in the paper; cited elsewhere: 86.7% as 86.7%  (모델: supported)
 - 근거로 든 문장: obtaining 4.5% and 7.0% respective average accuracy improvement over the prior state of the art
 
-- 판정: 
-- 메모: 
+- 판정: 수치틀림
+- 메모: 84.4%·92.7%·94.9%가 추출된 전문 어디에도 없음. GLUE 결과 표가 추출되지 않은 것으로 보이며, 인용한 P0042는 fine-tuning 절차 설명임. 이 추출로는 검증 불가능한 값을 단정함.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0042** (paragraph, GLUE)
 
@@ -168,8 +173,9 @@
 - 1차 검사: **flagged** — cited elsewhere: 1.1 as 1.1, 93.2 as 93.2  (모델: supported)
 - 근거로 든 문장: Our best performing system outperforms the top leaderboard system by +1.5 F1 in ensembling and +1.3 F1 as a single system.
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: '+1.5 F1 in ensembling and +1.3 F1 as a single system'은 인용한 P0049에 그대로 있음. 그러나 93.2 F1은 논문 다른 곳에 있고 인용한 두 문단에 없음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0047** (paragraph, SQuAD v1.1)
 
@@ -184,8 +190,9 @@
 - 1차 검사: **flagged** — cited elsewhere: 2.0 as 2.0  (모델: supported)
 - 근거로 든 문장: We observe a +5.1 F1 improvement over the previous best system.
 
-- 판정: 
-- 메모: 
+- 판정: 맞음
+- 메모: P0053에 'We observe a +5.1 F1 improvement over the previous best system'이 그대로 있음. 플래그의 '2.0'은 'SQuAD v2.0'의 버전 번호이며 측정값이 아님 — 제 수치 검사의 거짓 경보.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0053** (paragraph, SQuAD v2.0)
 
@@ -196,8 +203,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: BERT LARGE outperforms the authors' baseline ESIM+ELMo system by +27.1% and OpenAI GPT by 8.3%
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0056** (paragraph, SWAG)
 
@@ -208,8 +215,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: larger models lead to a strict accuracy improvement across all four datasets
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0067** (paragraph, Effect of Model Size)
 
@@ -222,8 +229,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: the [MASK] token does not appear during fine-tuning
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0031** (paragraph, Pre-training BERT)
 
@@ -234,8 +241,9 @@
 - 1차 검사: **not_in_paragraph**
 - 근거로 든 문장: none
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: 인용한 P0039는 fine-tuning 비용에 관한 문단이고 학습 불안정·random restart를 말하지 않음. 해당 서술은 논문의 다른 절에 있음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0039** (paragraph, Fine-tuning BERT)
 
@@ -246,8 +254,9 @@
 - 1차 검사: **not_in_paragraph**
 - 근거로 든 문장: none
 
-- 판정: 
-- 메모: 
+- 판정: 인용틀림
+- 메모: 인용한 P0075는 결론의 전이학습 서술이며 [MASK] 불일치·더 다양한 사전학습 과제·저자원 효율이라는 세 항목을 진술하지 않음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0075** (paragraph, Conclusion)
 

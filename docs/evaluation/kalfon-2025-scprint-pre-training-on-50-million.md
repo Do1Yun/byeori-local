@@ -8,7 +8,7 @@
 
 ## 채우는 방법
 
-주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음**
+주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음 / 무인용**
 
 - `맞음` 수치·조건이 논문과 일치하고 인용한 문단이 그 근거를 담고 있음
 - `인용틀림` 값은 맞는데 그 값이 없는 문단을 가리킴
@@ -36,8 +36,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scGPT and scPRINT respectively recover 42% and 67% more connections than GENIE3
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0005** (paragraph, Body)
 
@@ -52,8 +52,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: This suggests that by learning a cell model, scPRINT gains zero-shot abilities in many tasks of cellular biology.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0004** (paragraph, Body)
 
@@ -68,8 +68,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: We find key interconnected pathways of the oxidative stress response and extracellular matrix building via metal and ion exchange in the gene network of BPH-associated fibroblasts.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0001** (paragraph, Body)
 
@@ -84,8 +84,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: compute attention heads-based gene networks for 1 to 10,000 cells, at the genome scale, with commodity hardware and in a few minutes
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0022** (paragraph, scPRINT: a scRNAseq foundation model for gene network inference)
 
@@ -102,8 +102,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scPRINT pre-training tasks: denoising task whose goal is to recover the known transcriptomic profile from a purposefully downsampled expression profile. Bottleneck learning reconstructs the expression of requested genes using only their cell embedding.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0008** (paragraph, scPRINT: a scRNAseq foundation model for gene network inference)
 
@@ -118,8 +118,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scPRINT encodes the gene IDs using protein embeddings.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0016** (paragraph, scPRINT: a scRNAseq foundation model for gene network inference)
 
@@ -138,8 +138,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scPRINT is pretrained using 2200 randomly selected expressed genes in a cell profile.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0019** (paragraph, scPRINT: a scRNAseq foundation model for gene network inference)
 
@@ -154,8 +154,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scPRINT (omnipath's heads), based on the average of heads selected with our abovementioned head selection method inspired by ESM2
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0022** (paragraph, scPRINT: a scRNAseq foundation model for gene network inference)
 
@@ -170,8 +170,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scPRINT uses a novel expression decoder for foundation models, which outputs the parameters of a zero-inflated negative binomial (ZiNB) function for each gene j in cell i.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0021** (paragraph, scPRINT: a scRNAseq foundation model for gene network inference)
 
@@ -188,8 +188,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: In the scPRINT networks, 20% of the Transcription Factors for which we have data on ENCODE have connections significantly enriched for their ENCODE-validated gene targets
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0044** (paragraph, scPRINT outperforms the state of the art on cell type-specific ground truths)
 
@@ -208,8 +208,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: We show that since scPRINT does not aggregate profiles over neighboring cells, it outperforms MAGIC and KNNsmoothing2 in rare cell states subsets of the datasets (respectively: pericytes, microfold cells of epithelium of small intestine and microglial cells) with around 10 to 200 cells
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0053** (paragraph, scPRINT is competitive on tasks orthogonal to GN inference)
 
@@ -224,8 +224,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scPRINT also makes predictions over >200 cell type labels
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0056** (paragraph, scPRINT is competitive on tasks orthogonal to GN inference)
 
@@ -240,8 +240,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scPRINT cell embeddings preserve biological information competitively to state-of-the-art methods
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0059** (paragraph, scPRINT is competitive on tasks orthogonal to GN inference)
 
@@ -256,8 +256,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: scPRINT also predicts networks that agree with the Omnipath ground truth and are again enriched for cell type markers and TFs
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0050** (paragraph, scPRINT outperforms the state of the art on cell type-specific ground truths)
 
@@ -274,8 +274,9 @@
 - 1차 검사: **not_in_paragraph**
 - 근거로 든 문장: none
 
-- 판정: 
-- 메모: 
+- 판정: 맞음
+- 메모: 인용 문단 P0022의 마지막 문장에 그대로 있음: 'while we do not assess scPRINT's ability to model inhibition due to the scarcity of such annotations'. 1차 검사의 거짓 누락.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0022** (paragraph, scPRINT: a scRNAseq foundation model for gene network inference)
 
@@ -286,8 +287,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: the high data imbalance (i.e., TFs being not connected or highly connected) combined with the small dataset size (i.e., only a few dozen TFs assessed) and the low number of cells make the results in MCalla et al. very variable
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0047** (paragraph, scPRINT outperforms the state of the art on cell type-specific ground truths)
 
@@ -298,8 +299,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: selecting heads based on the ground truth itself, only using 50% of the connections available, shows substantial improvement.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0036** (paragraph, scPRINT recovers biological features in its gene networks)
 
@@ -314,8 +315,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Finally, while we do not assess scPRINT's ability to model inhibition due to the scarcity of such annotations, we leave open the possibility of using our head selection technique for such a task.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0022** (paragraph, scPRINT: a scRNAseq foundation model for gene network inference)
 

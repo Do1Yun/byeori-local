@@ -8,7 +8,7 @@
 
 ## 채우는 방법
 
-주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음**
+주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음 / 무인용**
 
 - `맞음` 수치·조건이 논문과 일치하고 인용한 문단이 그 근거를 담고 있음
 - `인용틀림` 값은 맞는데 그 값이 없는 문단을 가리킴
@@ -36,8 +36,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: allowing Novae to perform zero-shot domain inference across multiple gene panels, tissues and technologies
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0001** (paragraph, Body)
 
@@ -52,8 +52,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: natively corrects batch effect across slides
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0005** (paragraph, A foundation model for spatial transcriptomics)
 
@@ -68,8 +68,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Two distinguishing properties of Novae are that (1) it provides a nested organization of spatial domains for different resolutions
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0005** (paragraph, A foundation model for spatial transcriptomics)
 
@@ -84,8 +84,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: In addition to spatial transcriptomics and/or proteomics, H&E-stained images can be integrated into Novae to provide complementary morphological context.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0021** (paragraph, Incorporating histopathology information)
 
@@ -100,8 +100,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Indeed, this can take up to several days on 6 million cells, whereas Novae can perform these two operations in several seconds.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0015** (paragraph, Time and memory efficiency)
 
@@ -118,8 +118,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: The graph encoder utilized in Novae is a Graph Attention Network 16 (GAT), which employs attention mechanisms to aggregate information from neighboring cells.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0041** (paragraph, Graph encoder)
 
@@ -134,8 +134,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: we will leverage self-supervised learning 15,50 , which is well-suited for capturing meaningful data representations. Among the different self-supervision frameworks, SwAV 24 is a self-supervised learning algorithm that integrates contrastive learning and clustering.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0047** (paragraph, Prototypes and swapped assignment task)
 
@@ -150,8 +150,9 @@
 - 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
 - 근거로 든 문장: introduces a 'pseudo batch effect' noise to reduce the model's sensitivity to batch effects
 
-- 판정: 
-- 메모: 
+- 판정: 맞음
+- 메모: P0035에 'pseudo batch effect' noise, P0036에 'randomly subset the gene panel according to a ratio γ' 모두 그대로 있음. 1차 검사의 인용문 축자 실패로 인한 거짓 경보.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0035** (paragraph, Augmentation)
 
@@ -166,8 +167,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: After augmentation, cells are transformed into panel-invariant embeddings
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0038** (paragraph, Cell embedding)
 
@@ -182,8 +183,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: In addition to the hierarchical-based assignment, we offer the possibility to use Leiden 13 on the prototypes.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0055** (paragraph, Assignment to spatial domains)
 
@@ -200,8 +201,9 @@
 - 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
 - 근거로 든 문장: Novae outperformed six state-of-the-art methods (SpaceFlow, GraphST, STAGATE, etc.) in FIDE and JSD scores across breast, colon, and synthetic datasets.
 
-- 판정: 
-- 메모: 
+- 판정: 맞음
+- 메모: 여섯 방법 이름·FIDE·JSD·breast는 P0011, colon 우위는 P0012, synthetic은 P0014가 뒷받침. 다만 synthetic 데이터셋의 지표는 ARI와 FIDE이고 JSD가 아니므로 'FIDE and JSD across ... synthetic'은 다소 일반화됨.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0011** (paragraph, Integration and continuity of the spatial domains)
 
@@ -220,8 +222,9 @@
 - 1차 검사: **flagged** — 0.85 is nowhere in the paper  (모델: supported)
 - 근거로 든 문장: In the first test case, we used the breast dataset, composed of two slides with different gene panels.
 
-- 판정: 
-- 메모: 
+- 판정: 수치틀림
+- 메모: zero-shot으로 좋은 FIDE를 냈다는 취지는 P0011이 뒷받침하나, 제시한 값 0.85는 논문 어디에도 없음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0011** (paragraph, Integration and continuity of the spatial domains)
 
@@ -236,8 +239,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Indeed, this can take up to several days on 6 million cells, whereas Novae can perform these two operations in several seconds.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0015** (paragraph, Time and memory efficiency)
 
@@ -252,8 +255,9 @@
 - 1차 검사: **flagged** — 0.89 is nowhere in the paper  (모델: supported)
 - 근거로 든 문장: the fused Novae + CONCH model achieves the highest FIDE score
 
-- 판정: 
-- 메모: 
+- 판정: 수치틀림
+- 메모: 'fused Novae + CONCH model achieves the highest FIDE score'는 P0022에 그대로 있으나 값 0.89는 논문 어디에도 없음.
+- 판정자: 보조 (사람 확인 필요)
 
 **P0022** (paragraph, Incorporating histopathology information)
 
@@ -264,8 +268,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: performance drops at a slide degradation of 60%
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0018** (paragraph, Robustness to missing domains and perturbations)
 
@@ -282,8 +286,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: the pretrained Novae models rely exclusively on spatial transcriptomics data
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0031** (paragraph, Discussion)
 
@@ -294,8 +298,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: the degradation benchmark revealed a performance drop when approximately 60% of cells and gene expression were lost
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0031** (paragraph, Discussion)
 
@@ -310,8 +314,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Additionally, because Novae operates on cell centroids, it is currently limited in its ability to represent complex tissue structures such as axons, which are not yet accurately segmented with current methods.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0031** (paragraph, Discussion)
 
@@ -322,8 +326,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: expanding the size and heterogeneity of the training data would improve Novae's generalizability and its robustness to missing data domains
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0031** (paragraph, Discussion)
 

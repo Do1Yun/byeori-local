@@ -8,7 +8,7 @@
 
 ## 채우는 방법
 
-주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음**
+주장마다 판정 한 개를 적습니다: **맞음 / 인용틀림 / 수치틀림 / 근거없음 / 무인용**
 
 - `맞음` 수치·조건이 논문과 일치하고 인용한 문단이 그 근거를 담고 있음
 - `인용틀림` 값은 맞는데 그 값이 없는 문단을 가리킴
@@ -36,8 +36,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: GF CAB provides a framework for developing more efficient and biologically informative models for single-cell analysis
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0001** (abstract, Abstract)
 
@@ -48,8 +48,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: models trained on 1M profiles consistently matched or outperformed their 30M counterparts
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0001** (abstract, Abstract)
 
@@ -64,8 +64,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Central to this design is a cumulative assignment and balancing (CAB) module, implemented as a post-prediction processor.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0003** (paragraph, Introduction)
 
@@ -82,8 +82,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -92,8 +93,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: To reduce repetition across masked positions, we introduce a cumulative-assignment mechanism that explicitly propagates information across positions.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0005** (paragraph, Results)
 
@@ -108,8 +109,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: This cumulative suppression, conceptually analogous to a Noisy-OR formulation [24], ensures that high-probability assignments are not repeatedly selected across positions
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0006** (paragraph, Results)
 
@@ -120,8 +121,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -130,8 +132,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: penalizes overly similar probability distributions across masked positions
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0007** (paragraph, Results)
 
@@ -146,8 +148,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -156,8 +159,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: construct a reduced pretraining corpus (Genecorpus-1M) by uniformly subsampling one million profiles from the original Genecorpus-30M
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0003** (paragraph, Introduction)
 
@@ -170,8 +173,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -180,8 +184,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: GF CAB consistently achieved higher prediction accuracy, reduced repetition, and increased uniqueness across both data scales.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0009** (paragraph, GF CAB improves masked gene prediction fidelity and reveals diminishing returns from data scaling)
 
@@ -196,8 +200,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: GF CAB showed increased recovery of low-prevalence genes compared to GF
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0013** (paragraph, GF CAB improves masked gene prediction fidelity and reveals diminishing returns from data scaling)
 
@@ -208,8 +212,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -218,8 +223,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: GF CAB outperformed GF across both pretraining scales
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0015** (paragraph, GF CAB improves downstream task performance and preserves generalization under reduced data scaling)
 
@@ -234,8 +239,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: GF CAB pretrained on 1M data consistently matched or exceeded the performance of GF pretrained on 30M data
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0016** (paragraph, GF CAB improves downstream task performance and preserves generalization under reduced data scaling)
 
@@ -250,8 +255,9 @@
 - 1차 검사: **no_evidence** — the note cites nothing here
 - 근거로 든 문장: -
 
-- 판정: 
-- 메모: 
+- 판정: 무인용
+- 메모: 노트가 이 주장에 문단 인용을 달지 않았음. 구조 검증은 2~4절에 인용이 하나라도 있으면 통과시키므로 개별 주장의 무인용을 잡지 못함. 내용의 진위는 별도 확인이 필요함.
+- 판정자: 보조 (사람 확인 필요)
 
 > 인용 없음
 
@@ -260,8 +266,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Models were fine-tuned on single-cell data and evaluated in a zero-shot manner across modalities
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0019** (paragraph, GF CAB improves downstream task performance and preserves generalization under reduced data scaling)
 
@@ -278,8 +284,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: GF CAB consistently improved over GF within the naive ranking-based family, but did not fully close the performance gap with non-ranking-based approaches.
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0026** (paragraph, Component-wise contributions of GF CAB and benchmarking against foundation models)
 
@@ -290,8 +296,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: models pretrained on substantially smaller datasets can match or exceed the performance of models trained on datasets up to 30-fold larger
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0029** (paragraph, Discussion)
 
@@ -302,8 +308,8 @@
 - 1차 검사: **supported**
 - 근거로 든 문장: Future progress will likely depend on jointly advancing model architectures and representation strategies
 
-- 판정: 
-- 메모: 
+- 판정:
+- 메모:
 
 **P0030** (paragraph, Discussion)
 
