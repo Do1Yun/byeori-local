@@ -67,6 +67,12 @@ def review_markdown(sheet):
              "노트의 표현이 논문과 달라도 뜻이 같으면 `맞음`입니다. 인용된 문단이 길어 잘린 경우 "
              "`byeori-local read_paper_context`로 전문을 볼 수 있습니다.",
              "",
+             "## 1차 검사", "",
+             "`review --audit`을 쓰면 각 주장에 자동 1차 검사 결과가 붙습니다. `flagged`는 "
+             "**먼저 보셔야 할 것**이라는 뜻이고, `supported`가 맞다는 보장은 아닙니다. "
+             "이 검사는 사람이 논문을 읽고 판정한 5개 주장에서 5/5로 일치했지만, 5개는 "
+             "검사기를 검증할 만한 표본이 아닙니다.",
+             "",
              "## 핵심 수치", "",
              "이 논문에서 **반드시 맞아야 하는 주장 3~5개**의 번호를 적어주세요. 이후 모델·프롬프트를 "
              "바꿀 때 이 항목들이 기준이 됩니다.", "", "- ", "- ", "- ", ""]
@@ -75,8 +81,16 @@ def review_markdown(sheet):
         if claim["heading"] != heading:
             heading = claim["heading"]
             lines += [f"## {heading}", ""]
-        lines += [f"### {number}. {claim['claim']}", "",
-                  f"- 판정: ", f"- 메모: ", ""]
+        lines += [f"### {number}. {claim['claim']}", ""]
+        check = claim.get("audit")
+        if check:
+            flags = "; ".join(check["flags"])
+            lines += [f"- 1차 검사: **{check['verdict']}**"
+                      + (f" — {flags}" if flags else "")
+                      + (f"  (모델: {check['model_verdict']})"
+                         if check["model_verdict"] and check["model_verdict"] != check["verdict"] else ""),
+                      f"- 근거로 든 문장: {check['quote'] or '-'}", ""]
+        lines += [f"- 판정: ", f"- 메모: ", ""]
         if not claim["cited"]:
             lines += ["> 인용 없음", ""]
         for source in claim["sources"]:
@@ -101,6 +115,9 @@ def main(argv=None):
     review.add_argument("paper_id")
     review.add_argument("--revision")
     review.add_argument("--out", type=Path, help="Write Markdown here instead of printing JSON")
+    review.add_argument("--audit", action="store_true",
+                        help="Run the first pass so a person starts with the flagged claims")
+    review.add_argument("--limit", type=int, help="Audit only the first N claims")
     again = sub.add_parser("revalidate", help="Publish a note a failed job already wrote")
     again.add_argument("job_id", nargs="?")
     again.add_argument("--all", action="store_true")
@@ -149,11 +166,14 @@ def main(argv=None):
                 print(json.dumps({"problems": problems}, ensure_ascii=False, indent=2))
                 return 1 if problems else 0
             case "review":
-                sheet = service.review_sheet(args.paper_id, args.revision)
+                sheet = (service.audit(args.paper_id, args.revision, args.limit) if args.audit
+                         else service.review_sheet(args.paper_id, args.revision))
                 if args.out:
                     args.out.parent.mkdir(parents=True, exist_ok=True)
                     args.out.write_text(review_markdown(sheet), encoding="utf-8")
                     result = {"written": str(args.out), "claims": len(sheet["claims"])}
+                    if sheet.get("counts"):
+                        result["counts"] = sheet["counts"]
                 else:
                     result = sheet
             case "revalidate":

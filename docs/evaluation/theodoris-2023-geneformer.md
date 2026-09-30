@@ -17,6 +17,10 @@
 
 노트의 표현이 논문과 달라도 뜻이 같으면 `맞음`입니다. 인용된 문단이 길어 잘린 경우 `byeori-local read_paper_context`로 전문을 볼 수 있습니다.
 
+## 1차 검사
+
+`review --audit`을 쓰면 각 주장에 자동 1차 검사 결과가 붙습니다. `flagged`는 **먼저 보셔야 할 것**이라는 뜻이고, `supported`가 맞다는 보장은 아닙니다. 이 검사는 사람이 논문을 읽고 판정한 5개 주장에서 5/5로 일치했지만, 5개는 검사기를 검증할 만한 표본이 아닙니다.
+
 ## 핵심 수치
 
 이 논문에서 **반드시 맞아야 하는 주장 3~5개**의 번호를 적어주세요. 이후 모델·프롬프트를 바꿀 때 이 항목들이 기준이 됩니다.
@@ -29,6 +33,9 @@
 
 ### 1. **Context-Aware Attention Mechanism**: Geneformer uses self-attention to encode gene network hierarchy and context-specific interactions, enabling predictions in diverse biological contexts.
 
+- 1차 검사: **supported**
+- 근거로 든 문장: The advent of the self-attention mechanism 1,2 has further transformed the deep learning field by generating context-aware models that are able to pay attention to large input spaces and learn which elements are most important to focus on in each context, boosting predictions in a wide realm of applications 2,8 .
+
 - 판정: 
 - 메모: 
 
@@ -37,6 +44,9 @@
 > Recently, the concept of transfer learning has revolutionized fields such as natural language understanding 1,2 and computer vision 3 by leveraging deep learning models pretrained on large-scale general datasets that can then be fine-tuned towards a vast array of downstream tasks with limited task-specific data that would be insufficient to yield meaningful predictions when used in isolation. Unlike modelling approaches that necessitate retraining a new model from scratch for each task 6,7 , this approach democratizes the fundamental knowledge learned during the large-scale pretraining phase to a multitude of downstream applications distinct from the pretraining learning objective, transferring knowledge to new tasks (Fig. 1a and Extended Data Fig. 1a,b). The advent of the self-attention mechanism 1,2 has further transformed the deep learning field by generating context-aware models that are able to pay attention to large input spaces and learn which elements are most important to focus on in each context, boosting predictions in a wide realm of applications 2,8 . Gene regulatory network architectures are highly context-dependent, and attention-based models, known as transformers, may be exceptionally suited to context-specific modelling of network dynamics.
 
 ### 2. **Large-Scale Pretraining Corpus**: Pretrained on Genecorpus-30M, comprising 29.9 million human single-cell transcriptomes, to capture broad network dynamics.
+
+- 1차 검사: **supported**
+- 근거로 든 문장: comprising 29.9 million human single-cell transcriptomes
 
 - 판정: 
 - 메모: 
@@ -47,6 +57,9 @@
 
 ### 3. **Dosage Sensitivity Prediction**: Achieved 91% AUC in distinguishing dosage-sensitive vs. insensitive transcription factors using 10,000 cells, outperforming alternative methods.
 
+- 1차 검사: **supported**
+- 근거로 든 문장: The fine-tuned Geneformer significantly boosted the ability to predict dosage sensitivity compared to alternative methods (area under the receiver operating characteristic curve (AUC) 0.91)
+
 - 판정: 
 - 메모: 
 
@@ -55,6 +68,9 @@
 > We next tested whether Geneformer could boost predictions with limited data in a diverse set of downstream fine-tuning applications (Supplementary Table 2). A major challenge of interpreting copy number variants (CNVs) in genetic diagnosis is determining which genes are sensitive to changes in their dosage. Although conservation and allele frequency are commonly used to predict dosage sensitivity, these features do not vary across cell states and do not capture transcriptional dynamics that may inform contextual dosage sensitivity indicating which specific tissues would be affected by changes in the dosage of the gene. Using gene sets previously reported [19][20][21] to be dosage-sensitive versus dosage-insensitive, we fine-tuned Geneformer using only 10,000 random single-cell transcriptomes to distinguish dosage-sensitive versus dosage-insensitive transcription factors. The fine-tuned Geneformer significantly boosted the ability to predict dosage sensitivity compared to alternative methods (area under the receiver operating characteristic curve (AUC) 0.91) (Fig. 2a and Extended Data Fig. 7a). Notably, pretraining with larger and more diverse corpuses consistently improved the predictive power in the downstream task despite using the same amount of limited task-specific data for fine-tuning (Fig. 2b).
 
 ### 4. **Therapeutic Target Discovery**: Identified TEAD4 and GSN/PLN as candidate targets for cardiomyopathy, validated experimentally via CRISPR-mediated knockout.
+
+- 1차 검사: **supported**
+- 근거로 든 문장: CRISPR-mediated knockout of both Geneformer-predicted targets GSN and PLN in the TTN +/-cells significantly improved the contractile stress
 
 - 판정: 
 - 메모: 
@@ -68,6 +84,9 @@
 > We then performed experimental validation to determine whether inhibition of Geneformer-predicted therapeutic candidates for dilated cardiomyopathy could improve cardiomyocyte function in an experimental model of the disease. Titin (TTN) truncating mutations are the leading cause of dilated cardiomyopathy in humans and are found in about 20% of affected patients 36 . iPSC-derived cardiac microtissues harbouring a truncating variant (TTN +/-) in the A-band are known to exhibit reduced contractile stress compared to isogenic TTN +/+ controls 36 . Strikingly, CRISPR-mediated knockout of both Geneformer-predicted targets GSN and PLN in the TTN +/-cells significantly improved the contractile stress of the TTN +/-cardiac microtissues, validating these genes as promising candidate therapeutic targets for this disease (Fig. 6f,g and Extended Data Fig. 10e). These findings provide experimental validation in support of the utility of Geneformer as a tool for discovery of candidate therapeutic targets in human disease.
 
 ### 5. **Cross-Task Generalization**: Demonstrated robustness in predicting chromatin dynamics, transcription factor regulatory ranges, and network centrality across diverse tasks.
+
+- 1차 검사: **supported**
+- 근거로 든 문장: Geneformer significantly boosted the ability to predict bivalently marked genes compared to alternative methods (AUC 0.93 and 0.88; bivalent versus unmethylated or H3K4me3-only, respectively)
 
 - 판정: 
 - 메모: 
@@ -84,6 +103,9 @@
 
 ### 6. **Rank Value Encoding**: Genes are ranked by normalized expression across Genecorpus-30M, prioritizing context-specific regulators while deprioritizing housekeeping genes.
 
+- 1차 검사: **supported**
+- 근거로 든 문장: genes are ranked by their expression in that cell normalized by their expression across the entire Genecorpus-30M
+
 - 판정: 
 - 메모: 
 
@@ -92,6 +114,9 @@
 > The transcriptome of each single cell is then presented to the model as a rank value encoding where genes are ranked by their expression in that cell normalized by their expression across the entire Genecorpus-30M (Fig. 1c). Although the rank-based representation has limitations including not fully taking advantage of the precise gene expression measurements provided in transcript counts, the rank value encoding provides a non-parametric representation of the transcriptome of each single cell and takes advantage of the many observations of the expression of each gene across Genecorpus-30M to prioritize genes that distinguish cell state. Specifically, this method will deprioritize ubiquitously highly expressed housekeeping genes by normalizing them to a lower rank. Conversely, genes such as transcription factors that may be expressed at low levels when they are expressed but have a high power to distinguish cell state will move to a higher rank within the encoding (Extended Data Fig. 1c). Furthermore, this rank-based approach may be more robust against technical artefacts that may systematically bias the absolute transcript counts value whereas the overall relative ranking of genes within each cell remains more stable.
 
 ### 7. **Transformer Encoder**: Six self-attention layers with 256 embedding dimensions, trained via masked language modeling to learn gene relationships without labels.
+
+- 1차 검사: **flagged** — cited elsewhere: 256 as 256  (모델: supported)
+- 근거로 든 문장: During pretraining, 15% of the genes within each transcriptome were masked
 
 - 판정: 
 - 메모: 
@@ -102,6 +127,9 @@
 
 ### 8. **Pretraining Objective**: 15% of genes masked per transcriptome, with the model predicting masked genes using context from unmasked genes.
 
+- 1차 검사: **supported**
+- 근거로 든 문장: During pretraining, 15% of the genes within each transcriptome were masked
+
 - 판정: 
 - 메모: 
 
@@ -110,6 +138,9 @@
 > The rank value encoding of the transcriptome of each single cell then proceeds through six transformer encoder units 1,2 , each composed of a self-attention layer and feed forward neural network layer (Fig. 1c). Pretraining was accomplished using a masked learning objective, which has been shown in other informational fields 1,2 to improve generalizability of the foundational knowledge learned during pretraining for a wide range of downstream fine-tuning objectives. During pretraining, 15% of the genes within each transcriptome were masked, and the model was trained to predict which gene should be within each masked position in that specific cell state using the context of the remaining unmasked genes (Extended Data Fig. 1d-f). A principal strength of this approach is that it is entirely self-supervised and can be accomplished on completely unlabelled data, which allows the inclusion of large amounts of training data without being restricted to samples with accompanying labels. We implemented recent advances in distributed graphical processing unit (GPU) training 9,10 to allow efficient pretraining on the large-scale dataset.
 
 ### 9. **Fine-Tuning**: Applied to downstream tasks (e.g., cell-type annotation, dosage sensitivity) using minimal task-specific data, achieving 90% accuracy in cardiomyocyte classification.
+
+- 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
+- 근거로 든 문장: achieving 90% accuracy in cardiomyocyte classification
 
 - 판정: 
 - 메모: 
@@ -121,6 +152,9 @@
 ## 4. Key Results and Benchmarks
 
 ### 10. **Dosage Sensitivity**: Geneformer outperformed XGBoost and logistic regression, achieving 91% AUC for high-confidence neurodevelopmental disease genes.
+
+- 1차 검사: **supported**
+- 근거로 든 문장: The fine-tuned Geneformer model correctly predicted the high-confidence genes to be dosage sensitive in the specific context of fetal cerebral cells with 96% concordance with the original study.
 
 - 판정: 
 - 메모: 
@@ -135,6 +169,9 @@
 
 ### 11. **Chromatin Dynamics**: Predicted bivalent chromatin marks with 93% AUC, surpassing alternatives in distinguishing bivalent vs. unmethylated genes.
 
+- 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
+- 근거로 든 문장: Geneformer significantly boosted the ability to predict bivalently marked genes compared to alternative methods (AUC 0.93 and 0.58; bivalent versus unmethylated or H3K4me3-only, respectively)
+
 - 판정: 
 - 메모: 
 
@@ -143,6 +180,9 @@
 > Bivalent chromatin structure is known to mark key developmental genes in embryonic stem cells (ESCs), maintaining their promoters poised for activation 28 . Bivalent domains consist of large regions of H3K27me3 harbouring smaller regions of H3K4me3. We fine-tuned Geneformer to distinguish bivalently marked genes from those whose promoters were unmethylated or marked solely by H3K4me3 using transcriptomes from about 15,000 ESCs 29 . The labelled gene set used for this fine-tuning included only genes found in 56 conserved regions of the genome, as previously reported 28 . Geneformer significantly boosted the ability to predict bivalently marked genes compared to alternative methods (AUC 0.93 and 0.88; bivalent versus unmethylated or H3K4me3-only, respectively) (Fig. 3a,b and Extended Data Fig. 7d,e). Furthermore, predictions were generalizable to the remainder of the genome that was excluded from fine-tuning (Fig. 3c and Extended Data Fig. 8a-c). Thus, by fine-tuning Geneformer using solely transcriptional data with only 56 labelled loci in about 15,000 ESCs, the model could predict the results of more recent studies 30 that included genome-wide profiling of bivalent domains.
 
 ### 12. **Network Centrality**: Identified central vs. peripheral factors in the N1-dependent network with 81% AUC, even with as few as 5,000 training cells.
+
+- 1차 검사: **supported**
+- 근거로 든 문장: We found that nearly equivalent predictive potential was retained even when reducing the fine-tuning data to only 5,000 ECs
 
 - 판정: 
 - 메모: 
@@ -153,6 +193,9 @@
 
 ### 13. **Experimental Validation**: CRISPR-mediated knockout of TEAD4 reduced contractile stress in iPSC-derived cardiac microtissues, validating therapeutic potential.
 
+- 1차 검사: **not_in_paragraph**
+- 근거로 든 문장: none
+
 - 판정: 
 - 메모: 
 
@@ -161,6 +204,9 @@
 > We then performed experimental validation to determine whether inhibition of Geneformer-predicted therapeutic candidates for dilated cardiomyopathy could improve cardiomyocyte function in an experimental model of the disease. Titin (TTN) truncating mutations are the leading cause of dilated cardiomyopathy in humans and are found in about 20% of affected patients 36 . iPSC-derived cardiac microtissues harbouring a truncating variant (TTN +/-) in the A-band are known to exhibit reduced contractile stress compared to isogenic TTN +/+ controls 36 . Strikingly, CRISPR-mediated knockout of both Geneformer-predicted targets GSN and PLN in the TTN +/-cells significantly improved the contractile stress of the TTN +/-cardiac microtissues, validating these genes as promising candidate therapeutic targets for this disease (Fig. 6f,g and Extended Data Fig. 10e). These findings provide experimental validation in support of the utility of Geneformer as a tool for discovery of candidate therapeutic targets in human disease.
 
 ### 14. **Batch Robustness**: Geneformer embeddings were invariant to sequencing platforms, preservation methods, and patient variability.
+
+- 1차 검사: **supported**
+- 근거로 든 문장: gene embeddings were robust to sequencing platform 11 , preservation method 12,13 and individual patient variability 14
 
 - 판정: 
 - 메모: 
@@ -173,6 +219,9 @@
 
 ### 15. **Data Dependency**: Requires large-scale pretraining corpora; performance may degrade with highly specialized or rare datasets.
 
+- 1차 검사: **supported**
+- 근거로 든 문장: More than twice as many general cardiac ECs were needed to gain similar predictive potential as was possible from fine-tuning with the more relevant data from healthy versus dilated aortas
+
 - 판정: 
 - 메모: 
 
@@ -181,6 +230,9 @@
 > We tested whether Geneformer could be fine-tuned to distinguish central versus peripheral factors within the N1-dependent gene network using only single-cell transcriptional data from about 30,000 normal endothelial cells (ECs) from the Heart Atlas 32 without any perturbation data. Again, Geneformer significantly boosted the ability to predict central versus peripheral factors compared to alternative methods (AUC 0.81) (Fig. 4a and Extended Data Fig. 8e). Furthermore, fine-tuning the pretrained Geneformer on the Heart Atlas ECs 32 was able to distinguish N1 downstream targets from non-targets without any perturbation data, further demonstrating the ability of the model to encode key features of gene network dynamics and again significantly boosting predictions compared to alternative methods (Fig. 4b and Extended Data Fig. 9a). To investigate the threshold for minimal data needed for fine-tuning, we fine-tuned the pretrained Geneformer with progressively smaller numbers of normal ECs from the Heart Atlas 32 to distinguish central versus peripheral factors within the N1-dependent gene network. We found that nearly equivalent predictive potential was retained even when reducing the fine-tuning data to only 5,000 ECs (Fig. 4c). Then, to determine whether Geneformer could generate meaningful predictions using an even more miniscule number of fine-tuning training examples when the task-specific data were more relevant to the learning objective, we fine-tuned the pretrained Geneformer using only 884 ECs from healthy versus dilated aortas 14 . Interestingly, Geneformer was able to distinguish central versus peripheral factors in the N1-dependent network with fine-tuning on this very minimal data to a better degree than the predictions of alternative methods trained on the larger dataset of about 30,000 ECs 32 , demonstrating the strength of pretraining in enabling predictions from increasingly limited data (Fig. 4d and Extended Data Fig. 9b). More than twice as many general cardiac ECs were needed to gain similar predictive potential as was possible from fine-tuning with the more relevant data from healthy versus dilated aortas, suggesting that the minimum amount of fine-tuning data needed is dependent on both the specific application and relevance of the data to that task.
 
 ### 16. **Small-Data Challenges**: While effective with limited task-specific data, further optimization is needed for ultra-low-data scenarios.
+
+- 1차 검사: **supported**
+- 근거로 든 문장: nearly equivalent predictive potential was retained even when reducing the fine-tuning data to only 5,000 ECs
 
 - 판정: 
 - 메모: 
@@ -191,6 +243,9 @@
 
 ### 17. **Biological Interpretation**: Requires integration with experimental validation to confirm predicted gene interactions.
 
+- 1차 검사: **supported**
+- 근거로 든 문장: These findings provide experimental validation in support of the utility of Geneformer as a tool for discovery of candidate therapeutic targets in human disease.
+
 - 판정: 
 - 메모: 
 
@@ -200,10 +255,13 @@
 
 ### 18. **Future Directions**: Expanding pretraining to include more diverse tissues and leveraging multi-omics data for enhanced context-awareness.
 
+- 1차 검사: **supported**
+- 근거로 든 문장: pretraining with larger and more diverse corpuses consistently improved Geneformer's predictive power
+
 - 판정: 
 - 메모: 
 
 **P0032** (paragraph, Discussion)
 
-> In sum, we developed a context-aware deep learning model, Geneformer, pretrained on large-scale transcriptomic data to enable predictions in settings with limited data. Through the observation of a vast number of cell states during the pretraining process, Geneformer gained a fundamental understanding of network dynamics, encoding network hierarchy in the attention weights of the model in a completely self-supervised manner. Geneformer's ability to predict dosage-sensitive disease genes through the context-aware in silico deletion approach represents a valuable asset for interpretation of genetic variants, including prioritization of GWAS hits driving complex traits, and the specific tissues they are expected to affect. of GATA4 was significantly more deleterious to previously reported GATA4 direct targets 33 than to housekeeping genes, previously reported NOTCH1 targets 4 , previously reported NKX2-5 targets 46 or GATA4 indirect targets 33 (*P < 0.05 Wilcoxon, FDR-corrected; centre line, median; box limits, upper and lower quartiles; whiskers, 1.5× interquartile range; points, outliers). b, In silico deletion of GATA4 or TBX5 alone was significantly more deleterious to previously reported GATA4/TBX5 cobound targets 33 than to housekeeping genes; in silico deletion of the combination of GATA4 and TBX5 was even more deleterious to cobound targets, significantly more than to housekeeping genes and significantly more than the sum of the effect of GATA4 or TBX5 enable therapeutic discovery in innumerable diseases that have been previously impeded by limited data because they are rare or affect clinically inaccessible tissue. Furthermore, we found that pretraining with larger and more diverse corpuses consistently improved Geneformer's predictive power, in agreement with observations that large-scale pretraining allows training of deeper models that ultimately have greater predictive potential in fields including natural language understanding, computer vision and mathematical problem-solving 44 . Furthermore, exposure to hundreds of experimental datasets during pretraining also seemed to promote robustness to batch-dependent technical artefacts and individual variability that commonly impact single-cell analyses in biology. These findings suggest that as the amount of publicly available transcriptomic data continues to expand, future models pretrained on even larger-scale corpuses may open opportunities to achieve meaningful predictions in even more elusive ta
+> In sum, we developed a context-aware deep learning model, Geneformer, pretrained on large-scale transcriptomic data to enable predictions in settings with limited data. Through the observation of a vast number of cell states during the pretraining process, Geneformer gained a fundamental understanding of network dynamics, encoding network hierarchy in the attention weights of the model in a completely self-supervised manner. Geneformer's ability to predict dosage-sensitive disease genes through the context-aware in silico deletion approach represents a valuable asset for interpretation of genetic variants, including prioritization of GWAS hits driving complex traits, and the specific tissues they are expected to affect. of GATA4 was significantly more deleterious to previously reported GATA4 direct targets 33 than to housekeeping genes, previously reported NOTCH1 targets 4 , previously reported NKX2-5 targets 46 or GATA4 indirect targets 33 (*P < 0.05 Wilcoxon, FDR-corrected; centre line, median; box limits, upper and lower quartiles; whiskers, 1.5× interquartile range; points, outliers). b, In silico deletion of GATA4 or TBX5 alone was significantly more deleterious to previously reported GATA4/TBX5 cobound targets 33 than to housekeeping genes; in silico deletion of the combination of GATA4 and TBX5 was even more deleterious to cobound targets, significantly more than to housekeeping genes and significantly more than the sum of the effect of GATA4 or TBX5 enable therapeutic discovery in innumerable diseases that have been previously impeded by limited data because they are rare or affect clinically inaccessible tissue. Furthermore, we found that pretraining with larger and more diverse corpuses consistently improved Geneformer's predictive power, in agreement with observations that large-scale pretraining allows training of deeper models that ultimately have greater predictive potential in fields including natural language understanding, computer vision and mathematical problem-solving 44 . Furthermore, exposure to hundreds of experimental datasets during pretraining also seemed to promote robustness to batch-dependent technical artefacts and individual variability that commonly impact single-cell analyses in biology. These findings suggest that as the amount of publicly available transcriptomic data continues to expand, future models pretrained on even larger-scale corpuses may open opportunities to achieve meaningful predictions in even more elusive tasks with increasingly limited task-specific data. Overall, Geneformer represents a pretrained deep learning model whose fundamental understanding of network dynamics can now be democratized to a broad range of downstream applications to accelerate discovery of key network regulators and candidate therapeutic targets in settings with limited data.
 

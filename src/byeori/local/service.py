@@ -809,7 +809,6 @@ class LocalService:
         return self._free_stem(document_stem(metadata, paper["title"]), paper["paper_id"])
 
     REVIEW_SECTIONS = HEADINGS[1:5]
-    REVIEW_BLOCK_CHARS = 2500
 
     def review_sheet(self, paper_id, revision=None):
         """Each claim a note makes beside the paragraphs it cites, for a person to judge.
@@ -852,12 +851,37 @@ class LocalService:
                                "sources": [{"id": block_id,
                                             "kind": blocks[block_id]["kind"] if block_id in blocks else "missing",
                                             "section": blocks[block_id]["section"] if block_id in blocks else "",
-                                            "text": " ".join(blocks[block_id]["text"].split())[:self.REVIEW_BLOCK_CHARS]
+                                            # Never abridged: truncating the evidence is what
+                                            # made this workspace's own checks wrong twice.
+                                            "text": " ".join(blocks[block_id]["text"].split())
                                             if block_id in blocks else ""}
                                            for block_id in cited]})
         return {"stem": paper["stem"], "paper_id": paper["paper_id"],
                 "revision_id": note["revision_id"], "note_sha256": note["note_sha256"],
                 "fields": fields, "blocks_total": len(blocks), "claims": claims}
+
+    def audit(self, paper_id, revision=None, limit=None):
+        """Run the first pass over a note's claims and return the sheet with its verdicts.
+
+        The verdicts say which claims a person should look at first. They are not a substitute
+        for that reading: see byeori.local.audit for what was measured and on how little.
+        """
+        from .audit import audit_claim
+        sheet = self.review_sheet(paper_id, revision)
+        note = self.store.note(sheet["paper_id"], revision)
+        document = json.loads(self.store.path(note["extraction_path"]).read_text(encoding="utf-8"))
+        whole = "\n".join(" ".join(block["text"].split()) for block in document["blocks"])
+        claims = sheet["claims"][:limit] if limit else sheet["claims"]
+        for claim in claims:
+            evidence = "\n\n".join(f"[{source['id']}] {source['text']}"
+                                   for source in claim["sources"] if source["text"])
+            claim["audit"] = audit_claim(self.backend, claim["claim"], evidence, whole)
+        sheet["audited"] = len(claims)
+        sheet["counts"] = {verdict: sum(1 for claim in claims
+                                        if claim.get("audit", {}).get("verdict") == verdict)
+                           for verdict in ("supported", "flagged", "not_in_paragraph",
+                                           "contradicted", "unclear", "no_evidence")}
+        return sheet
 
     def refresh_metadata(self, paper_id):
         """Settle a published paper's identity without writing its note again.

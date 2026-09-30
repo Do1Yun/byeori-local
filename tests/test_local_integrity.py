@@ -1217,3 +1217,60 @@ def test_a_review_sheet_can_be_asked_for_an_earlier_revision(workspace):
     service.process(paper_id)
     sheet = service.review_sheet(paper_id, revision=first["revision_id"])
     assert sheet["revision_id"] == first["revision_id"]
+
+
+# --- the first pass a person starts from ----------------------------------------------------
+
+def answering(verdict, quote):
+    class Checker(PartsModel):
+        def generate(self, system, prompt, *, think=None):
+            return Generation(f"VERDICT: {verdict}\nQUOTE: {quote}\nWHY: because", self.model,
+                              10, 10, "stop")
+    return Checker()
+
+
+def test_a_percentage_the_paper_printed_as_a_decimal_still_counts():
+    """Geneformer's note says "91% AUC" where the paper says "AUC 0.91"."""
+    from byeori.local.audit import locate_numbers, notations
+    assert "0.91" in notations("91%") and "91%" in notations("0.91")
+    missing, elsewhere = locate_numbers("91% AUC on dosage sensitivity",
+                                        "the model reached AUC 0.91 on that task")
+    assert missing == [] and elsewhere == {}
+
+
+def test_a_value_in_the_paper_but_not_in_the_cited_paragraph_is_told_apart():
+    from byeori.local.audit import locate_numbers
+    missing, elsewhere = locate_numbers("256 embedding dimensions", "six transformer encoder units",
+                                        whole="the 256 embedding dimensions for each gene")
+    assert missing == [] and elsewhere == {"256": ["256"]}
+
+    missing, elsewhere = locate_numbers("444% better", "nothing like it", whole="nor here")
+    assert missing == ["444%"] and elsewhere == {}
+
+
+def test_support_the_model_cannot_quote_is_flagged():
+    from byeori.local.audit import audit_claim
+    invented = audit_claim(answering("supported", "a sentence that is not there at all"),
+                           "the model reached 0.91", "the paragraph says something else entirely")
+    assert invented["verdict"] == "flagged"
+    assert "quoted support is not in the paragraphs" in "; ".join(invented["flags"])
+
+    honest = audit_claim(answering("supported", "the paragraph says something else entirely"),
+                         "the claim", "the paragraph says something else entirely")
+    assert honest["verdict"] == "supported" and honest["flags"] == []
+
+
+def test_a_claim_with_nothing_cited_is_reported_not_judged():
+    from byeori.local.audit import audit_claim
+    assert audit_claim(answering("supported", "x"), "a claim", "")["verdict"] == "no_evidence"
+
+
+def test_the_first_pass_marks_which_claims_to_read_first(headed):
+    service, paper_id, result = headed
+    service.backend = answering("supported", "We found 42 de novo variants in SCN2A")
+    sheet = service.audit(result["stem"])
+    assert sheet["audited"] == len(sheet["claims"])
+    assert sum(sheet["counts"].values()) == sheet["audited"]
+    for claim in sheet["claims"]:
+        assert claim["audit"]["verdict"] in {"supported", "flagged", "not_in_paragraph",
+                                             "contradicted", "unclear", "no_evidence"}
