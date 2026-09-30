@@ -1095,3 +1095,27 @@ def test_a_paper_too_much_of_which_cannot_be_digested_is_not_published(workspace
         service.process(paper_id)
     with pytest.raises(ValueError, match="no published"):
         store.note(paper_id)
+
+
+def test_a_run_of_paragraphs_cited_as_a_range_names_each_of_them(workspace):
+    """qwen3:8b cited [P0040-P0043] in every line of scGPT's methodology section."""
+    from byeori.local.service import normalize_note
+    assert normalize_note("Input is binned [P0040-P0043].") == \
+        "Input is binned [P0040][P0041][P0042][P0043]."
+    assert normalize_note("Attention masking [P0048–P0050].") == \
+        "Attention masking [P0048][P0049][P0050]."
+
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(HEADED_TEI))
+    service.backend.answer = note_text().replace("[P0001]", "[P0001-P0002]")
+    assert service.process(paper_id)["status"] == "succeeded"
+    assert "[P0001][P0002]" in store.note(paper_id)["text"]
+
+
+def test_a_range_too_wide_to_mean_anything_is_left_alone():
+    from byeori.local.service import MAX_CITATION_SPAN, normalize_note
+    assert normalize_note("Everything [P0001-P0131].") == "Everything [P0001-P0131]."
+    assert normalize_note("Backwards [P0043-P0040].") == "Backwards [P0043-P0040]."
+    assert normalize_note("Itself [P0007-P0007].") == "Itself [P0007-P0007]."
+    edge = f"At the edge [P0001-P{MAX_CITATION_SPAN:04d}]."
+    assert normalize_note(edge).count("[P") == MAX_CITATION_SPAN

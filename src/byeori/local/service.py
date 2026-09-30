@@ -296,6 +296,11 @@ CANONICAL_HEADINGS = {heading.lower(): heading for heading in HEADINGS}
 # citations the same way. qwen3:8b did on the BERT paper, whose own text is full of bracketed
 # tokens such as [MASK] and [CLS]. A parenthesised run of paragraph IDs is unambiguous.
 PARENTHESISED_CITATION = re.compile(r"\((P\d{4}(?:\s*[,;]\s*P\d{4})*)\)")
+# A model that has read a methods section cites the run of paragraphs it describes, as
+# [P0040-P0043]. qwen3:8b did on scGPT, in every line of one section, and the run named blocks
+# that all exist. A span longer than this is not a citation of anything in particular.
+CITATION_RANGE = re.compile(r"\[P(\d{4})\s*[-–—]\s*P?(\d{4})\]")
+MAX_CITATION_SPAN = 12
 
 
 def normalize_note(text):
@@ -306,8 +311,15 @@ def normalize_note(text):
     level-3 heading is formatting drift, not a structural error, so a note that names the right
     sections in the right order is not thrown away over either. Nothing else is rewritten.
     """
+    def expand(found):
+        first, last = int(found[1]), int(found[2])
+        if not 0 < last - first < MAX_CITATION_SPAN:
+            return found[0]
+        return "".join(f"[P{number:04d}]" for number in range(first, last + 1))
+
     lines = []
     for line in text.strip().splitlines():
+        line = CITATION_RANGE.sub(expand, line)
         line = PARENTHESISED_CITATION.sub(
             lambda found: "".join(f"[{block_id}]" for block_id in re.findall(r"P\d{4}", found[1])),
             line.rstrip())
