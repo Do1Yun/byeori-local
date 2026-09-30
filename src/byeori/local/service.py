@@ -808,6 +808,57 @@ class LocalService:
             return current
         return self._free_stem(document_stem(metadata, paper["title"]), paper["paper_id"])
 
+    REVIEW_SECTIONS = HEADINGS[1:5]
+    REVIEW_BLOCK_CHARS = 2500
+
+    def review_sheet(self, paper_id, revision=None):
+        """Each claim a note makes beside the paragraphs it cites, for a person to judge.
+
+        byeori validates a note's structure and makes it mark the authors' limitations apart from
+        the model's, but nothing measures whether a claim is what the paper says; upstream's own
+        benchmark leaves quality to the reader and lists pages side by side. Reading a note against
+        its sources by hand is the part that cannot be automated: this workspace's own checks
+        called two correct claims fabricated because the paper wrote "an additional 22 pathways"
+        where the note wrote "22 unique pathways". So this builds the pairing and nothing more -
+        no verdict is computed, and the cited text is never abridged below what it takes to judge.
+        """
+        resolved = self.store.paper_for_stem(paper_id) or paper_id
+        paper = self.store.paper(resolved)
+        note = self.store.note(paper["paper_id"], revision)
+        fields, _ = parse_frontmatter(note["text"])
+        document = json.loads(self.store.path(note["extraction_path"]).read_text(encoding="utf-8"))
+        blocks = {block["id"]: block for block in document["blocks"]}
+        # Read-time only, and it changes no stored note: a note published before the citation rule
+        # was general still carries groups such as [P0015, P0031], and a reviewer needs to see the
+        # text of both paragraphs.
+        text = expand_citations(note["text"])
+        claims = []
+        for heading in self.REVIEW_SECTIONS:
+            if f"## {heading}" not in text:
+                continue
+            section = text.split(f"## {heading}", 1)[1].split("\n## ", 1)[0]
+            for line in section.splitlines():
+                stripped = line.strip()
+                # A claim is a claim whether the model wrote it as a bullet or as a sentence, and
+                # one with no citation at all is exactly what a reviewer should be shown.
+                if len(stripped) < 12 or stripped.startswith(("#", "---", "|", ">")):
+                    continue
+                cited = list(dict.fromkeys(re.findall(r"\[(P\d{4})\]", stripped)))
+                # Strip the list marker, not the bold the claim's own first words are wrapped in.
+                claim = re.sub(r"^(?:[-*\u2022]|\d+[.)])\s*", "", stripped)
+                claims.append({"heading": heading,
+                               "claim": re.sub(r"\s*\[P\d{4}\]", "", claim).strip(),
+                               "cited": cited,
+                               "sources": [{"id": block_id,
+                                            "kind": blocks[block_id]["kind"] if block_id in blocks else "missing",
+                                            "section": blocks[block_id]["section"] if block_id in blocks else "",
+                                            "text": " ".join(blocks[block_id]["text"].split())[:self.REVIEW_BLOCK_CHARS]
+                                            if block_id in blocks else ""}
+                                           for block_id in cited]})
+        return {"stem": paper["stem"], "paper_id": paper["paper_id"],
+                "revision_id": note["revision_id"], "note_sha256": note["note_sha256"],
+                "fields": fields, "blocks_total": len(blocks), "claims": claims}
+
     def refresh_metadata(self, paper_id):
         """Settle a published paper's identity without writing its note again.
 

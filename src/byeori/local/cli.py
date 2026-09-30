@@ -41,6 +41,50 @@ def build_service(args=None, *, create=False):
         os.environ.get("BYEORI_GROBID_URL", "http://127.0.0.1:8070")), lookup=lookup)
 
 
+VERDICTS = "맞음 / 인용틀림 / 수치틀림 / 근거없음"
+
+
+def review_markdown(sheet):
+    """The sheet as something a person can read and fill in, one claim at a time."""
+    fields = sheet["fields"]
+    lines = [f"# 검토표: {sheet['stem']}", "",
+             f"- 논문: {fields.get('title', '')}",
+             f"- 학술지·연도: {fields.get('journal', '-')} {fields.get('year', '-')}"
+             f"  (출처 {fields.get('metadata_source', '-')}, DOI {fields.get('doi') or '-'})",
+             f"- 노트 revision: `{sheet['revision_id']}`  sha256 `{sheet['note_sha256'][:16]}`",
+             f"- 추출: {fields.get('extraction_status', '-')}, 블록 {sheet['blocks_total']}개, "
+             f"생성 경로 {fields.get('generation_path', '-')}, 제시 {fields.get('blocks_presented', '-')}",
+             f"- 모델: {fields.get('ingest_model_id', '-')}, 검증 수준 {fields.get('evidence_validation', '-')}",
+             "",
+             "## 채우는 방법", "",
+             f"주장마다 판정 한 개를 적습니다: **{VERDICTS}**",
+             "",
+             "- `맞음` 수치·조건이 논문과 일치하고 인용한 문단이 그 근거를 담고 있음",
+             "- `인용틀림` 값은 맞는데 그 값이 없는 문단을 가리킴",
+             "- `수치틀림` 값이나 실험 조건이 논문과 다름",
+             "- `근거없음` 논문에 없는 내용",
+             "",
+             "노트의 표현이 논문과 달라도 뜻이 같으면 `맞음`입니다. 인용된 문단이 길어 잘린 경우 "
+             "`byeori-local read_paper_context`로 전문을 볼 수 있습니다.",
+             "",
+             "## 핵심 수치", "",
+             "이 논문에서 **반드시 맞아야 하는 주장 3~5개**의 번호를 적어주세요. 이후 모델·프롬프트를 "
+             "바꿀 때 이 항목들이 기준이 됩니다.", "", "- ", "- ", "- ", ""]
+    heading = None
+    for number, claim in enumerate(sheet["claims"], 1):
+        if claim["heading"] != heading:
+            heading = claim["heading"]
+            lines += [f"## {heading}", ""]
+        lines += [f"### {number}. {claim['claim']}", "",
+                  f"- 판정: ", f"- 메모: ", ""]
+        if not claim["cited"]:
+            lines += ["> 인용 없음", ""]
+        for source in claim["sources"]:
+            lines += [f"**{source['id']}** ({source['kind']}, {source['section']})", "",
+                      f"> {source['text'] or '(추출에 없는 문단)'}", ""]
+    return "\n".join(lines) + "\n"
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Byeori development runtime with Ollama (no AWS required)")
     parser.add_argument("--data-dir", help="Workspace directory, or BYEORI_LOCAL_DATA")
@@ -53,6 +97,10 @@ def main(argv=None):
     sub.add_parser("init", help="Create the workspace named by --data-dir or BYEORI_LOCAL_DATA")
     sub.add_parser("doctor")
     sub.add_parser("check", help="Report disagreements between notes, search and job status")
+    review = sub.add_parser("review", help="A sheet pairing each claim with the paragraphs it cites")
+    review.add_argument("paper_id")
+    review.add_argument("--revision")
+    review.add_argument("--out", type=Path, help="Write Markdown here instead of printing JSON")
     again = sub.add_parser("revalidate", help="Publish a note a failed job already wrote")
     again.add_argument("job_id", nargs="?")
     again.add_argument("--all", action="store_true")
@@ -100,6 +148,14 @@ def main(argv=None):
                 problems = service.store.integrity_problems()
                 print(json.dumps({"problems": problems}, ensure_ascii=False, indent=2))
                 return 1 if problems else 0
+            case "review":
+                sheet = service.review_sheet(args.paper_id, args.revision)
+                if args.out:
+                    args.out.parent.mkdir(parents=True, exist_ok=True)
+                    args.out.write_text(review_markdown(sheet), encoding="utf-8")
+                    result = {"written": str(args.out), "claims": len(sheet["claims"])}
+                else:
+                    result = sheet
             case "revalidate":
                 if args.all == bool(args.job_id):
                     raise ValueError("Give a job ID or --all, not both")

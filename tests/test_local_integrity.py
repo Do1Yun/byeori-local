@@ -1180,3 +1180,40 @@ def test_revalidating_everything_leaves_a_paper_that_already_has_a_note_alone(wo
     result = service.revalidate_all()
     assert result["published"] == 0
     assert store.note(paper_id) == published, "a paper with a note is not republished from a failure"
+
+
+# --- the sheet a person judges a note by --------------------------------------------------
+
+def test_a_review_sheet_pairs_every_claim_with_the_text_it_cites(headed):
+    service, paper_id, result = headed
+    sheet = service.review_sheet(result["stem"])          # a stem is a handle a person can type
+    assert sheet["stem"] == result["stem"] and sheet["revision_id"] == result["revision_id"]
+    assert sheet["claims"], "a note with claims produces claims to judge"
+    for claim in sheet["claims"]:
+        assert "[P" not in claim["claim"], "the citation is shown beside the claim, not inside it"
+        assert not claim["claim"].startswith(("-", "*")), "the list marker is not part of the claim"
+        for source in claim["sources"]:
+            assert source["id"] in claim["cited"]
+            assert source["text"], "a claim is judged against the paragraph, not against its id"
+    assert not any("verdict" in claim for claim in sheet["claims"]), \
+        "no verdict is computed: two correct claims were called fabricated by matching strings"
+
+
+def test_a_review_sheet_keeps_the_bold_a_claim_opens_with(workspace):
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(HEADED_TEI))
+    service.backend.answer = note_text().replace(
+        "The model reports 28.4 BLEU.", "- **Cell type annotation**: 0.84 precision.")
+    service.process(paper_id)
+    claims = service.review_sheet(store.paper(paper_id)["stem"])["claims"]
+    assert any(claim["claim"].startswith("**Cell type annotation**:") for claim in claims), \
+        [claim["claim"][:40] for claim in claims]
+
+
+def test_a_review_sheet_can_be_asked_for_an_earlier_revision(workspace):
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(HEADED_TEI))
+    first = service.process(paper_id)
+    service.process(paper_id)
+    sheet = service.review_sheet(paper_id, revision=first["revision_id"])
+    assert sheet["revision_id"] == first["revision_id"]

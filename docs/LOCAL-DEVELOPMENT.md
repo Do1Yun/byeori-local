@@ -35,7 +35,8 @@
 | catalog 페이지네이션·색인 재구축·백업·복원 | 미구현 |
 | schema migration | 실서비스 검증 (노트 3개가 있는 워크스페이스를 제자리에서 2→3으로 올림) |
 | 무모니터 Mac 운영 절차 | 미구현 |
-| 실제 논문 다수에 대한 품질·성능 평가 | 미검증 |
+| 주장↔인용 검토표 생성(`review`) | 실서비스 검증 |
+| 실제 논문 다수에 대한 품질·성능 평가 | 진행 중 (`docs/evaluation/`) |
 
 ## 설치
 
@@ -81,6 +82,7 @@ byeori-local status [<job_id>]
 byeori-local check
 byeori-local revalidate --all
 byeori-local metadata --all
+byeori-local review <문서 식별자> --out docs/evaluation/<이름>.md
 ```
 
 전역 옵션(`--data-dir`, `--model`, `--context`)은 하위 명령 앞에 둡니다. PDF는 SHA-256으로 중복 확인하며 원본을 보존합니다. DOI가 없어도 등록할 수 있습니다. `process`는 GROBID 추출과 Ollama 호출을 동기 실행하므로 수 분 걸릴 수 있습니다.
@@ -159,6 +161,7 @@ Apple M4 / 10 core / RAM 16 GB / macOS 15.7.4, GROBID 0.9.1-crf(colima 4 cpu · 
 
 ## 현재 범위와 제한
 
+- 노트가 논문을 옳게 옮겼는지는 **사람이 읽어야** 압니다. `review` 명령이 주장마다 그것이 인용한 문단의 원문을 나란히 놓은 검토표를 만들고, 판정은 비워 둡니다. 판정을 계산하지 않는 이유는 실측입니다: 이 저장소에서 문자열 대조로 확인했을 때 옳은 주장 두 개를 조작으로 오판했습니다 — 논문은 "an additional 22 pathways"라고 쓰고 노트는 "22 unique pathways"라고 썼기 때문입니다. 원본 byeori의 `benchmark.py`도 같은 입장입니다("Quality is left to the reader").
 - 구조·citation ID 존재만 기계적으로 확인합니다(`validation_level: structure_checked`). 근거가 claim을 의미적으로 뒷받침하는지는 검사하지 않습니다. 실제 실행에서 노트가 어떤 수치를 실제로는 그 문단에 없는 문단 ID로 인용한 사례를 확인했습니다. 수치를 쓰려면 `read_paper_context`로 원문을 확인해야 합니다.
 - 표는 행당 한 줄, 셀은 `|`로 분리합니다. 다만 GROBID가 병합 셀(colspan)을 표현하지 못해 여러 열 머리글이 한 셀에 합쳐지는 경우가 있고, 그때 값이 어느 열에 속하는지는 원문 확인이 필요합니다.
 - GROBID 추출 결과만 읽습니다. OCR·이미지 이해·표 셀 검증·보충자료는 자동 처리하지 않습니다. 초록이 없으면 추출 상태를 `partial`로 기록하고 게시는 막지 않습니다.
