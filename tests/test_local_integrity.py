@@ -75,7 +75,7 @@ class Model:
         self.answer = note_text(cite, trailing)
         self.calls = 0
 
-    def generate(self, system, prompt):
+    def generate(self, system, prompt, *, think=None):
         self.calls += 1
         return Generation(self.answer, self.model, 100, 200, "stop")
 
@@ -309,7 +309,7 @@ class PartsModel:
         from byeori.local.llm import estimate_tokens
         return estimate_tokens(system + prompt) <= self.input_budget
 
-    def generate(self, system, prompt):
+    def generate(self, system, prompt, *, think=None):
         self.systems.append(system)
         shown = re.findall(r"\[(P\d+)\]", prompt)
         if system.startswith("Digest one part") or system.startswith("Merge these digests"):
@@ -393,7 +393,7 @@ class LongDigestModel(PartsModel):
 
     FIRST = 0.95
 
-    def generate(self, system, prompt):
+    def generate(self, system, prompt, *, think=None):
         from byeori.local.llm import estimate_tokens
         self.systems.append(system)
         shown = list(dict.fromkeys(re.findall(r"\[(P\d+)\]", prompt)))
@@ -443,7 +443,7 @@ class SlowModel(PartsModel):
         self.started = __import__("threading").Event()
         self.answer = "It reaches 28.4 BLEU. [E1]"
 
-    def generate(self, system, prompt):
+    def generate(self, system, prompt, *, think=None):
         if "Evidence Note" in system or system.startswith("Digest"):
             return Generation(note_text(), self.model, 100, 200, "stop")
         self.started.set()
@@ -854,9 +854,9 @@ def test_a_running_job_says_which_stage_it_is_in(workspace):
     seen = []
 
     class Watching(PartsModel):
-        def generate(self, system, prompt):
+        def generate(self, system, prompt, *, think=None):
             seen.append(store.jobs()[0]["stage"])
-            return super().generate(system, prompt)
+            return super().generate(system, prompt, think=think)
 
     service = LocalService(store, Watching(), Extractor(long_tei(20)))
     result = service.process(paper_id)
@@ -1005,3 +1005,93 @@ def test_an_earlier_revision_still_reads_after_the_paper_moves(workspace):
     kept = service.read(paper_id, revision=first["revision_id"])
     assert kept["revision_id"] == first["revision_id"]
     assert service.context(paper_id, "P0001", revision=first["revision_id"])["text"]
+
+
+def test_a_part_whose_digest_is_cut_off_is_halved_and_retried(workspace):
+    """scGPT lost a ten-part run to one digest the model could not finish inside the budget."""
+    store, paper_id, _ = workspace
+
+    class RefusesLargeParts(PartsModel):
+        """Finishes a digest only when its part holds few enough blocks."""
+
+        limit = 3
+
+        def generate(self, system, prompt, *, think=None):
+            self.systems.append(system)
+            shown = re.findall(r"\[(P\d+)\]", prompt)
+            if system.startswith("Digest one part"):
+                if len(shown) > self.limit:
+                    raise ModelError("Model did not finish normally; incomplete output "
+                                     "was not published")
+                return Generation("- a reported value " + " ".join(f"[{i}]" for i in shown),
+                                  self.model, 100, 50, "stop")
+            return Generation(note_text(shown[0]), self.model, 100, 200, "stop")
+
+    service = LocalService(store, RefusesLargeParts(), Extractor(long_tei(20)))
+    coverage = service.process(paper_id)["coverage"]
+    assert coverage["parts_split"] > 0
+    assert coverage["parts"] > coverage["parts_planned"]
+    assert coverage["blocks_presented"] == coverage["blocks_total"] == 20, \
+        "every block still reaches the model exactly once"
+    assert len(list(store.path(f"runs/{store.note(paper_id)['job_id']}").glob("digest-*.md"))) \
+        == coverage["parts"]
+
+
+def test_splitting_stops_rather_than_going_on_for_ever(workspace):
+    store, paper_id, _ = workspace
+
+    class NeverFinishes(PartsModel):
+        def generate(self, system, prompt, *, think=None):
+            self.systems.append(system)
+            if system.startswith("Digest one part"):
+                raise ModelError("Model did not finish normally; incomplete output was not published")
+            return Generation(note_text(), self.model, 100, 200, "stop")
+
+    service = LocalService(store, NeverFinishes(), Extractor(long_tei(20)))
+    with pytest.raises(RuntimeError, match="missing to note it|did not finish"):
+        service.process(paper_id)
+    from byeori.local.service import MAX_PART_SPLITS
+    attempts = sum(s.startswith("Digest one part") for s in service.backend.systems)
+    assert attempts <= 2 * MAX_PART_SPLITS + 4, f"{attempts} attempts is not a bounded retry"
+
+
+def test_one_block_the_model_cannot_digest_does_not_cost_the_paper(workspace):
+    """On scGPT this block was a figure's axis labels flattened into a paragraph."""
+    store, paper_id, _ = workspace
+
+    class ChokesOnOneBlock(PartsModel):
+        def generate(self, system, prompt, *, think=None):
+            self.systems.append(system)
+            shown = re.findall(r"\[(P\d+)\]", prompt)
+            if system.startswith("Digest one part"):
+                if "P0007" in shown:
+                    raise ModelError("Model did not finish normally; incomplete output "
+                                     "was not published")
+                return Generation("- a reported value " + " ".join(f"[{i}]" for i in shown),
+                                  self.model, 100, 50, "stop")
+            return Generation(note_text(shown[0]), self.model, 100, 200, "stop")
+
+    service = LocalService(store, ChokesOnOneBlock(), Extractor(long_tei(20)))
+    coverage = service.process(paper_id)["coverage"]
+    assert coverage["blocks_skipped"] == ["P0007"]
+    assert coverage["blocks_presented"] == 19 and coverage["blocks_total"] == 20
+    assert 'blocks_presented: "19/20"' in store.note(paper_id)["text"], \
+        "the note says how much of the paper it was written from"
+
+
+def test_a_paper_too_much_of_which_cannot_be_digested_is_not_published(workspace):
+    store, paper_id, _ = workspace
+
+    class ChokesOnMany(PartsModel):
+        def generate(self, system, prompt, *, think=None):
+            self.systems.append(system)
+            shown = re.findall(r"\[(P\d+)\]", prompt)
+            if system.startswith("Digest one part"):
+                raise ModelError("Model did not finish normally; incomplete output was not published")
+            return Generation(note_text(shown[0] if shown else "P0001"), self.model, 100, 200, "stop")
+
+    service = LocalService(store, ChokesOnMany(), Extractor(long_tei(20)))
+    with pytest.raises(RuntimeError, match="too much of this paper is missing"):
+        service.process(paper_id)
+    with pytest.raises(ValueError, match="no published"):
+        store.note(paper_id)

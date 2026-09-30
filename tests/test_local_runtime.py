@@ -41,7 +41,7 @@ class Model:
             for heading in HEADINGS)
         self.calls = 0
 
-    def generate(self, system, prompt):
+    def generate(self, system, prompt, *, think=None):
         self.calls += 1
         return Generation(self.answer, self.model, 100, 200, "stop")
 

@@ -123,7 +123,7 @@ class OllamaBackend:
                 "model": self.model, "installed_models": names,
                 "digest": found.get("digest") if found else None}
 
-    def generate(self, system, prompt):
+    def generate(self, system, prompt, *, think=None):
         if not self.model:
             raise ModelError("Set BYEORI_LOCAL_MODEL or --model to an installed Ollama model")
         estimated = estimate_tokens(system + prompt)
@@ -132,11 +132,21 @@ class OllamaBackend:
                              f"{self.input_budget} (context {self.context} less output "
                              f"{self.output} and {RESERVE_TOKENS} reserved). Nothing was "
                              "truncated; write the note in parts or raise the context.")
-        value = self._request("POST", "/api/chat", json={
+        body = {
             "model": self.model, "stream": False,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
             "options": {"num_ctx": self.context, "num_predict": self.output, "temperature": 0},
-        })
+        }
+        if think is not None:
+            body["think"] = think
+        try:
+            value = self._request("POST", "/api/chat", json=body)
+        except ModelError:
+            if think is None:
+                raise
+            # A model with no thinking to turn off is not a reason to refuse the call.
+            value = self._request("POST", "/api/chat", json={k: v for k, v in body.items()
+                                                             if k != "think"})
         text = (value.get("message") or {}).get("content", "")
         if value.get("done") is not True or value.get("done_reason") != "stop":
             raise ModelError("Model did not finish normally; incomplete output was not published")

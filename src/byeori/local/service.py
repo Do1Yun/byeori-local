@@ -74,9 +74,15 @@ def format_blocks(blocks):
 # where it writes a line per row. A part is therefore bounded twice, by what the model may read
 # and by what it may write back; the first real chunked run was cut off mid-digest because only
 # the reading side was bounded.
-DIGEST_OUTPUT_PER_TOKEN = {"table": 1.8, "figure": 1.0}
-PROSE_OUTPUT_PER_TOKEN = 0.8
+DIGEST_OUTPUT_PER_TOKEN = {"table": 1.3, "figure": 0.9}
+PROSE_OUTPUT_PER_TOKEN = 0.5
 DIGEST_FIXED_OUTPUT = 512
+# A part whose digest the model could not finish asks for more reply than the budget allows, and
+# halving it is a better answer than losing the paper or guessing a new ratio. Bounded, because a
+# paper that needs more than this is telling us the window is wrong, not the plan.
+MAX_PART_SPLITS = 8
+# A paper missing this much of itself is not a paper this runtime can note.
+MAX_SKIPPED_FRACTION = 0.1
 
 
 def digest_rooms(backend, system):
@@ -660,7 +666,7 @@ class LocalService:
 
         def digest(system, text, label):
             try:
-                piece = self.backend.generate(system, text + DIGEST_NOW)
+                piece = self.backend.generate(system, text + DIGEST_NOW, think=False)
             except ModelError as exc:
                 raise ModelError(f"{label}: {exc}") from exc
             receipts.append(piece.receipt())
@@ -668,13 +674,37 @@ class LocalService:
             return piece.text
 
         parts = plan_parts(blocks, *digest_rooms(self.backend, DIGEST_SYSTEM))
-        digests = []
-        for index, part in enumerate(parts, 1):
-            label = f"Part {index} of {len(parts)}, {part[0]['id']} to {part[-1]['id']}"
-            self._stage(job_id, record, f"generate part {index}/{len(parts)}")
-            text = digest(DIGEST_SYSTEM, format_blocks(part), label)
-            self.store.write_new(f"{prefix}/digest-{index:02d}.md", text.encode())
+        digests, pending, written, splits, skipped = [], list(parts), 0, 0, []
+        while pending:
+            part = pending.pop(0)
+            written += 1
+            label = f"Part {written} of {len(parts) + splits}, {part[0]['id']} to {part[-1]['id']}"
+            self._stage(job_id, record, f"generate part {written}/{len(parts) + splits}")
+            try:
+                text = digest(DIGEST_SYSTEM, format_blocks(part), label)
+            except ModelError as exc:
+                if "did not finish" not in str(exc) or splits >= MAX_PART_SPLITS:
+                    raise
+                written -= 1
+                if len(part) == 1:
+                    # One block the model cannot digest inside its budget. On scGPT this was a
+                    # figure's axis labels and panel letters flattened into a paragraph, which
+                    # was never evidence a note could cite. The paper is not lost for it: the
+                    # block is recorded as not covered, and the note says how much it holds.
+                    skipped.append(part[0]["id"])
+                    if len(skipped) > max(1, int(len(blocks) * MAX_SKIPPED_FRACTION)):
+                        raise ModelError(
+                            f"{len(skipped)} blocks could not be digested "
+                            f"({', '.join(skipped)}); too much of this paper is missing to note "
+                            "it. Raise the output budget or check the extraction.") from exc
+                    continue
+                middle = len(part) // 2
+                pending[:0] = [part[:middle], part[middle:]]
+                splits += 1
+                continue
+            self.store.write_new(f"{prefix}/digest-{written:02d}.md", text.encode())
             digests.append(f"### {label}\n{text}")
+        parts_written = written
         combined = "\n\n".join(digests)
         if not self.backend.fits(NOTE_FROM_DIGESTS_SYSTEM, combined + WRITE_NOW):
             # Merging digests into fewer digests was measured on this workspace and it expands
@@ -684,15 +714,18 @@ class LocalService:
             # of the evidence. Digesting the paper itself does compress, to about 0.54.
             needed = estimate_tokens(NOTE_FROM_DIGESTS_SYSTEM + combined + WRITE_NOW) \
                 + self.backend.output + RESERVE_TOKENS
-            raise ModelError(f"The {len(parts)} part digests need about "
+            raise ModelError(f"The {parts_written} part digests need about "
                              f"{estimate_tokens(combined)} tokens and the input budget is "
                              f"{self.backend.input_budget}. Writing this paper's note needs a "
                              f"context of about {needed} tokens; nothing was truncated.")
-        self._stage(job_id, record, f"generate note from {len(parts)} digests")
+        self._stage(job_id, record, f"generate note from {parts_written} digests")
         result = self.backend.generate(NOTE_FROM_DIGESTS_SYSTEM, combined + WRITE_NOW)
         record["generations"] = receipts + [result.receipt()]
-        record["coverage"] = {"path": "chunked", "parts": len(parts), "blocks_total": len(blocks),
-                              "blocks_presented": sum(len(part) for part in parts),
+        record["coverage"] = {"path": "chunked", "parts": parts_written,
+                              "parts_planned": len(parts), "parts_split": splits,
+                              "blocks_total": len(blocks),
+                              "blocks_presented": len(blocks) - len(skipped),
+                              "blocks_skipped": skipped,
                               "blocks_cited_in_digests": len(cited & {b["id"] for b in blocks}),
                               "largest_part_tokens": max(estimate_tokens(format_blocks(part))
                                                          for part in parts)}
