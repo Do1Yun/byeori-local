@@ -170,7 +170,7 @@
 ### 11. **Chromatin Dynamics**: Predicted bivalent chromatin marks with 93% AUC, surpassing alternatives in distinguishing bivalent vs. unmethylated genes.
 
 - 1차 검사: **flagged** — the quoted support is not in the paragraphs  (모델: supported)
-- 근거로 든 문장: Geneformer significantly boosted the ability to predict bivalently marked genes compared to alternative methods (AUC 0.93 and 0.58; bivalent versus unmethylated or H3K4me3-only, respectively)
+- 근거로 든 문장: Geneformer significantly boosted the ability to predict bivalently marked genes compared to alternative methods (AUC 0.93 and 0.48; bivalent versus unmethylated or H3K4me3-only, respectively)
 
 - 판정: 
 - 메모: 
