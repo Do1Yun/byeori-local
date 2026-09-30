@@ -53,6 +53,9 @@ def main(argv=None):
     sub.add_parser("init", help="Create the workspace named by --data-dir or BYEORI_LOCAL_DATA")
     sub.add_parser("doctor")
     sub.add_parser("check", help="Report disagreements between notes, search and job status")
+    again = sub.add_parser("revalidate", help="Publish a note a failed job already wrote")
+    again.add_argument("job_id", nargs="?")
+    again.add_argument("--all", action="store_true")
     meta = sub.add_parser("metadata", help="Settle a published paper's year, journal and work ID")
     meta.add_argument("paper_id", nargs="?")
     meta.add_argument("--all", action="store_true")
@@ -97,6 +100,10 @@ def main(argv=None):
                 problems = service.store.integrity_problems()
                 print(json.dumps({"problems": problems}, ensure_ascii=False, indent=2))
                 return 1 if problems else 0
+            case "revalidate":
+                if args.all == bool(args.job_id):
+                    raise ValueError("Give a job ID or --all, not both")
+                result = service.revalidate_all() if args.all else service.revalidate(args.job_id)
             case "metadata":
                 if args.all == bool(args.paper_id):
                     raise ValueError("Give a paper ID or --all, not both")

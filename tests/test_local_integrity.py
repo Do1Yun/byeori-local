@@ -1119,3 +1119,64 @@ def test_a_range_too_wide_to_mean_anything_is_left_alone():
     assert normalize_note("Itself [P0007-P0007].") == "Itself [P0007-P0007]."
     edge = f"At the edge [P0001-P{MAX_CITATION_SPAN:04d}]."
     assert normalize_note(edge).count("[P") == MAX_CITATION_SPAN
+
+
+# --- publishing a note a failed job already wrote -------------------------------------------
+
+def test_a_note_that_only_failed_its_check_is_published_without_the_model(workspace):
+    """scGPT was written in 70 minutes and failed the last step twice over its citation format."""
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(HEADED_TEI))
+    service.backend.answer = note_text().replace("[P0001]", "[P0001 & P0002]")   # unreadable then
+    with pytest.raises(RuntimeError, match="citations"):
+        service.process(paper_id)
+    failed = store.jobs()[0]["job_id"]
+
+    # What a checker that has since learned the format would make of the same candidate.
+    candidate = store.path(f"runs/{failed}/candidate.md")
+    candidate.write_text(note_text(), encoding="utf-8")
+    before = service.backend.calls
+
+    published = service.revalidate(failed)
+    assert published["published"] and published["written_by_job"] == failed
+    assert service.backend.calls == before, "nothing is generated; the candidate is the output"
+    note = store.note(paper_id)["text"]
+    assert f'written_by_job: "{failed}"' in note and 'revision_reason: "revalidated"' in note
+    assert store.integrity_problems() == []
+    assert [hit["doc_id"] for hit in store.search("BLEU")] == [published["stem"]]
+
+
+def test_a_candidate_that_still_fails_the_check_publishes_nothing(workspace):
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(HEADED_TEI))
+    service.backend.answer = "Not a note at all."
+    with pytest.raises(RuntimeError):
+        service.process(paper_id)
+    failed = store.jobs()[0]["job_id"]
+    with pytest.raises(ValueError, match="headings"):
+        service.revalidate(failed)
+    with pytest.raises(ValueError, match="no published"):
+        store.note(paper_id)
+
+
+def test_a_job_that_wrote_no_candidate_cannot_be_revalidated(workspace):
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(b'<TEI><text><body/></text></TEI>'))
+    with pytest.raises(RuntimeError):
+        service.process(paper_id)
+    with pytest.raises(ValueError, match="no candidate"):
+        service.revalidate(store.jobs()[0]["job_id"])
+
+
+def test_revalidating_everything_leaves_a_paper_that_already_has_a_note_alone(workspace):
+    store, paper_id, _ = workspace
+    service = LocalService(store, Model(), Extractor(HEADED_TEI))
+    service.process(paper_id)
+    service.backend.answer = "Not a note at all."
+    with pytest.raises(RuntimeError):
+        service.process(paper_id)
+    published = store.note(paper_id)
+
+    result = service.revalidate_all()
+    assert result["published"] == 0
+    assert store.note(paper_id) == published, "a paper with a note is not republished from a failure"

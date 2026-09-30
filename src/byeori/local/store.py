@@ -220,6 +220,10 @@ class LocalStore:
             raise ValueError("Unknown paper ID")
         return dict(row)
 
+    def papers_with_notes(self):
+        with self.db() as db:
+            return {row["paper_id"]: row["revision_id"] for row in db.execute("SELECT * FROM notes")}
+
     def paper_for_stem(self, stem):
         """The stored paper a wiki document id names; search and synthesis speak in stems."""
         with self.db() as db:

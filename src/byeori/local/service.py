@@ -292,6 +292,272 @@ class GrobidExtractor:
 
 
 CANONICAL_HEADINGS = {heading.lower(): heading for heading in HEADINGS}
+# Five ways real notes have cited a paragraph, all of them saying the same thing: [P0042],
+# (P0042) on a paper whose own text is full of [MASK] and [CLS], [P0011, P0017] for two of them,
+# [P0040-P0043] for a run, and any mix. The application reads them all and stores one form, since
+# the citation is the contract and the punctuation around it is not. A group that holds anything
+# else, a backwards range, or a span too wide to point at anything is left exactly as written.
+CITATION_GROUP = re.compile(r"[\[(]\s*(P\d{4}(?:\s*[,;\-–—]\s*P?\d{4})*)\s*[\])]")
+MAX_CITATION_SPAN = 12
+
+
+def expand_citations(text):
+    def expand(found):
+        blocks = []
+        for piece in re.split(r"[,;]", found[1]):
+            span = re.fullmatch(r"\s*P(\d{4})\s*[-–—]\s*P?(\d{4})\s*", piece)
+            if span:
+                first, last = int(span[1]), int(span[2])
+                if not 0 < last - first < MAX_CITATION_SPAN:
+                    return found[0]
+                blocks += [f"P{number:04d}" for number in range(first, last + 1)]
+                continue
+            single = re.fullmatch(r"\s*P?(\d{4})\s*", piece)
+            if not single:
+                return found[0]
+            blocks.append(f"P{int(single[1]):04d}")
+        return "".join(f"[{block}]" for block in dict.fromkeys(blocks))
+
+    return CITATION_GROUP.sub(expand, text)
+
+
+TEXT_TAGS = {"p", "note", "quote"}
+
+
+NOTE_FROM_DIGESTS_SYSTEM = NOTE_SYSTEM + """
+Your input is a set of faithful digests of this paper's parts, written from its full text, in
+reading order. Every value in them carries the paragraph ID it came from. Use only those values
+and those IDs. Say when the digests do not cover something the note would otherwise report.
+"""
+
+
+def format_blocks(blocks):
+    return "\n\n".join(f"[{block['id']}] {block['section']}\n{block['text']}" for block in blocks)
+
+
+# Measured on this workspace with qwen3:8b: a digest that keeps only what the note reports came
+# back at 0.74 tokens per token of a prose part and 1.75 for a part holding three numeric tables,
+# where it writes a line per row. A part is therefore bounded twice, by what the model may read
+# and by what it may write back; the first real chunked run was cut off mid-digest because only
+# the reading side was bounded.
+DIGEST_OUTPUT_PER_TOKEN = {"table": 1.3, "figure": 0.9}
+PROSE_OUTPUT_PER_TOKEN = 0.5
+DIGEST_FIXED_OUTPUT = 512
+# A part whose digest the model could not finish asks for more reply than the budget allows, and
+# halving it is a better answer than losing the paper or guessing a new ratio. Bounded, because a
+# paper that needs more than this is telling us the window is wrong, not the plan.
+MAX_PART_SPLITS = 8
+# A paper missing this much of itself is not a paper this runtime can note.
+MAX_SKIPPED_FRACTION = 0.1
+
+
+def digest_rooms(backend, system):
+    """What one part may hold: readable in one pass, and answerable within the output budget."""
+    read = backend.input_budget - estimate_tokens(system + DIGEST_NOW)
+    write = backend.output - DIGEST_FIXED_OUTPUT
+    if read <= 0 or write <= 0:
+        raise ModelError(f"A context of {backend.context} with {backend.output} output tokens "
+                         "leaves no room to digest a part; raise either to write this paper in parts.")
+    return read, write
+
+
+def block_cost(block):
+    """What reading this block costs, and what its digest is expected to cost to write."""
+    read = estimate_tokens(format_blocks([block])) + 2
+    ratio = DIGEST_OUTPUT_PER_TOKEN.get(block["kind"], PROSE_OUTPUT_PER_TOKEN)
+    return read, math.ceil(read * ratio)
+
+
+def pack(items, read_room, write_room, cost, name):
+    """Consecutive items in groups the model can both read and answer, never splitting an item."""
+    groups, current, read, write = [], [], 0, 0
+    for item in items:
+        needs_read, needs_write = cost(item)
+        if needs_read > read_room or needs_write > write_room:
+            raise ModelError(f"{name(item)} needs about {needs_read} tokens to read and "
+                             f"{needs_write} to digest, and a part may use {read_room} and "
+                             f"{write_room}; raise the context or the output budget.")
+        if current and (read + needs_read > read_room or write + needs_write > write_room):
+            groups.append(current)
+            current, read, write = [], 0, 0
+        current.append(item)
+        read, write = read + needs_read, write + needs_write
+    if current:
+        groups.append(current)
+    return groups
+
+
+def plan_parts(blocks, read_room, write_room):
+    return pack(blocks, read_room, write_room, block_cost, lambda block: f"Block {block['id']}")
+
+
+class ExtractionError(ValueError):
+    """An extraction that cannot ground a note, with the status to record for the paper."""
+
+    def __init__(self, message, status):
+        super().__init__(message)
+        self.status = status
+
+
+def _flat(node):
+    return " ".join("".join(node.itertext()).split())
+
+
+def _table(node):
+    """One row per line, cells separated by ' | '. Joining cells invents values."""
+    rows = []
+    for row in node.findall("{*}row"):
+        cells = [_flat(cell) for cell in row.findall("{*}cell")]
+        if any(cells):
+            rows.append(" | ".join(cells))
+    return "\n".join(rows) or _flat(node)
+
+
+def _figure(node, section, blocks):
+    """A figure or table is its own block; its caption never becomes the running section."""
+    head = node.find("{*}head")
+    caption = _flat(head) if head is not None else ""
+    table = node.find(".//{*}table")
+    description = node.find("{*}figDesc")
+    label = caption or ("Table" if table is not None else "Figure")
+    if description is not None and (text := _flat(description)):
+        blocks.append({"section": section, "kind": "figure", "caption": label, "text": text})
+    if table is not None and (text := _table(table)):
+        blocks.append({"section": section, "kind": "table", "caption": label,
+                       "text": f"{label}\n{text}" if label else text})
+
+
+def _walk(node, section, blocks):
+    for child in node:
+        tag = child.tag.rsplit("}", 1)[-1]
+        if tag == "head":
+            section = _flat(child) or section
+        elif tag == "figure" or tag == "table":
+            _figure(child, section, blocks)
+        elif tag == "div":
+            _walk(child, section, blocks)
+        elif tag == "list":
+            for item in child.findall("{*}item"):
+                if text := _flat(item):
+                    blocks.append({"section": section, "kind": "paragraph", "text": text})
+        elif tag in TEXT_TAGS and (text := _flat(child)):
+            blocks.append({"section": section, "kind": "paragraph", "text": text,
+                           "coords": child.get("coords")})
+    return section
+
+
+def parse_tei(xml: bytes):
+    """Blocks a note can cite, in reading order: abstract, then body text, figures and tables."""
+    # GROBID output is bounded by the caller; reject entity declarations explicitly.
+    if b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():
+        raise ValueError("Unsupported XML declaration")
+    root = ET.fromstring(xml)
+    blocks = []
+    abstract = root.find(".//{*}abstract")
+    if abstract is not None:
+        # GROBID nests the abstract in a <div>, so only a descendant search finds its paragraphs.
+        for node in abstract.iter():
+            if node.tag.rsplit("}", 1)[-1] in TEXT_TAGS and (text := _flat(node)):
+                blocks.append({"section": "Abstract", "kind": "abstract", "text": text,
+                               "coords": node.get("coords")})
+    body = root.find(".//{*}text/{*}body")
+    if body is None:
+        raise ExtractionError("Extraction has no full-text body", "failed")
+    before = len(blocks)
+    _walk(body, "Body", blocks)
+    if len(blocks) == before:
+        raise ExtractionError("Extraction contains no body text; OCR or another extraction "
+                              "method may be needed", "needs_ocr")
+    return [dict(block, id=f"P{i:04d}") for i, block in enumerate(blocks, 1)]
+
+
+def extraction_status(blocks):
+    """complete only when the paper's own abstract and its body both reached the note's input."""
+    kinds = {block["kind"] for block in blocks}
+    return "complete" if "abstract" in kinds else "partial"
+
+
+def parse_metadata(xml: bytes):
+    """Title, authors, year, DOI and journal as the extraction records them.
+
+    GROBID reads what is printed on the PDF and is not always right: on the paper used here it
+    read an affiliation line as a second author and took the date of the arXiv stamp rather than
+    publication. Everything is recorded as extracted, never corrected, and the note's frontmatter
+    says where it came from.
+    """
+    root = ET.fromstring(xml)
+    header = root.find(".//{*}teiHeader")
+    if header is None:
+        return {"title": "", "authors": [], "year": "", "doi": "", "journal": ""}
+
+    def first(path):
+        node = header.find(path)
+        return _flat(node) if node is not None else ""
+
+    authors = []
+    for node in header.findall(".//{*}sourceDesc//{*}author/{*}persName"):
+        surname = first_child = ""
+        surname_node = node.find("{*}surname")
+        if surname_node is not None:
+            surname = _flat(surname_node)
+        forenames = " ".join(_flat(name) for name in node.findall("{*}forename"))
+        if surname or forenames:
+            authors.append({"surname": surname, "forenames": forenames,
+                            "name": " ".join(part for part in (forenames, surname) if part)})
+    date = header.find('.//{*}date[@type="published"]')
+    when = (date.get("when") or _flat(date)) if date is not None else ""
+    year = (re.search(r"(19|20)\d{2}", when).group(0) if re.search(r"(19|20)\d{2}", when) else "")
+    return {"title": first('.//{*}titleStmt/{*}title') or first('.//{*}analytic/{*}title'),
+            "authors": authors, "year": year,
+            "doi": first('.//{*}idno[@type="DOI"]'),
+            "journal": first('.//{*}monogr/{*}title[@level="j"]')}
+
+
+def document_stem(metadata, fallback):
+    """The logical document id the wiki uses: `{first author}-{year}-{title words}`.
+
+    byeori identifies a paper this way everywhere else, and byeori.identity.split_stem reads it
+    back, so a note published here carries an identity the rest of the system recognises. The
+    SHA-256 stays the storage key; this is what a reader and a synthesis page see.
+    """
+    from byeori import identity
+    surname = "-".join(identity.name_words(metadata["authors"][0]["surname"])) \
+        if metadata.get("authors") else ""
+    words = identity.words(metadata.get("title") or fallback)[:STEM_TITLE_WORDS]
+    parts = [surname or "unknown", metadata.get("year") or "0000", "-".join(words) or "untitled"]
+    return "-".join(parts)
+
+
+def tei_application(xml: bytes):
+    """The extractor that wrote this TEI, as the TEI itself records it."""
+    try:
+        node = ET.fromstring(xml).find(".//{*}appInfo/{*}application")
+    except ET.ParseError:
+        node = None
+    if node is None:
+        return {"ident": None, "version": None}
+    return {"ident": node.get("ident"), "version": node.get("version")}
+
+
+class GrobidExtractor:
+    def __init__(self, url="http://127.0.0.1:8070", transport=None):
+        self.url, self.transport = url.rstrip("/"), transport
+
+    def extract(self, pdf: bytes):
+        try:
+            with httpx.Client(timeout=180, trust_env=False, transport=self.transport) as client:
+                response = client.post(self.url + "/api/processFulltextDocument",
+                    files={"input": ("paper.pdf", pdf, "application/pdf")},
+                    data={"consolidateHeader": "0", "consolidateCitations": "0", "includeRawCitations": "1"})
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise RuntimeError("GROBID extraction failed; check server and PDF (OCR is not automatic)") from exc
+        if len(response.content) > 10 * 1024 * 1024:
+            raise ValueError("Extraction exceeds 10 MiB limit")
+        return response.content, parse_tei(response.content)
+
+
+CANONICAL_HEADINGS = {heading.lower(): heading for heading in HEADINGS}
 # A model that has just read a paper full of (Author, year) citations writes its paragraph
 # citations the same way. qwen3:8b did on the BERT paper, whose own text is full of bracketed
 # tokens such as [MASK] and [CLS]. A parenthesised run of paragraph IDs is unambiguous.
@@ -311,18 +577,9 @@ def normalize_note(text):
     level-3 heading is formatting drift, not a structural error, so a note that names the right
     sections in the right order is not thrown away over either. Nothing else is rewritten.
     """
-    def expand(found):
-        first, last = int(found[1]), int(found[2])
-        if not 0 < last - first < MAX_CITATION_SPAN:
-            return found[0]
-        return "".join(f"[P{number:04d}]" for number in range(first, last + 1))
-
     lines = []
     for line in text.strip().splitlines():
-        line = CITATION_RANGE.sub(expand, line)
-        line = PARENTHESISED_CITATION.sub(
-            lambda found: "".join(f"[{block_id}]" for block_id in re.findall(r"P\d{4}", found[1])),
-            line.rstrip())
+        line = expand_citations(line.rstrip())
         match = re.fullmatch(r"#{2,4}\s+(.+)", line)
         if match and match[1].lower() in CANONICAL_HEADINGS:
             line = "## " + CANONICAL_HEADINGS[match[1].lower()]
@@ -510,42 +767,10 @@ class LocalService:
 
             self._stage(job_id, record, "publish")
             coverage = record["coverage"]
-            # The wiki's frontmatter schema, filled from the extraction rather than from a
-            # metadata service, plus what only this runtime knows about how the note was written.
-            front = {"title": metadata.get("title") or paper["title"],
-                     "authors": ", ".join(author["name"] for author in metadata["authors"]),
-                     "year": metadata.get("year", ""), "doi": metadata.get("doi", ""),
-                     "work_ids": metadata.get("work_id") or "",
-                     "metadata_source": metadata.get("metadata_source", "extraction"),
-                     "category": "other", "stem": stem,
-                     "pdf_path": paper["pdf_path"], "pdf_filename": f"{paper_id}.pdf",
-                     "pdf_sha256": paper_id, "source_format": "pdf",
-                     "source_collection": "byeori-local",
-                     "text_extractor": (record.get("extractor") or {}).get("ident") or "grobid",
-                     "text_extractor_version": (record.get("extractor") or {}).get("version") or "",
-                     "text_extracted_date": now()[:10],
-                     "source_hash": extraction_id, "extraction_status": status,
-                     "ingest_harness": "byeori-local", "ingest_agent": "byeori-local-note",
-                     "ingest_agent_version": PROMPT_VERSION,
-                     "ingest_model_id": result.model, "ingest_reasoning": "default",
-                     "prompt_version": PROMPT_VERSION, "created": now(),
-                     "evidence_validation": validation_level,
-                     "generation_path": coverage["path"],
-                     "blocks_presented": f"{coverage['blocks_presented']}/{coverage['blocks_total']}",
-                     "extraction_path": f"{prefix}/document.json"}
-            if metadata.get("journal"):
-                front["journal"] = metadata["journal"]
-            # A disagreement between the page and the authority is recorded for a person to
-            # settle; this code does not pick a winner.
-            for field in ("openalex_year", "openalex_journal", "openalex_doi",
-                          "metadata_disagreement"):
-                if metadata.get(field):
-                    front[field] = metadata[field]
-            page = "---\n" + "\n".join(f"{key}: {json.dumps(value, ensure_ascii=False)}"
-                                       for key, value in front.items()) + "\n---\n\n"
-            info = ("\n\n## 1. Document Information\n\n"
-                    f"Title: {paper['title'].replace(chr(10), ' ')}\n\nPDF SHA-256: {paper_id}\n\n")
-            page += text.replace("\n## 2. Key Contributions", info + "## 2. Key Contributions", 1)
+            page = self._page(paper, text, stem=stem, metadata=metadata, prefix=prefix,
+                              extraction_id=extraction_id, extraction_status=status,
+                              model=result.model, validation_level=validation_level,
+                              coverage=coverage, extractor=record.get("extractor") or {})
             result_info = {"job_id": job_id, "paper_id": paper_id, "stem": stem,
                            "status": "succeeded",
                            "extraction_status": status, "validation_level": validation_level,
@@ -655,6 +880,120 @@ class LocalService:
                 return candidate
             suffix += 1
             candidate = f"{stem}-{suffix}"
+
+    def _page(self, paper, body, *, stem, metadata, prefix, extraction_id, extraction_status,
+              model, validation_level, coverage, extractor, extra=None):
+        """The note as it is stored: the wiki's frontmatter schema around the model's own text."""
+        front = {"title": metadata.get("title") or paper["title"],
+                 "authors": ", ".join(author["name"] for author in metadata.get("authors") or []),
+                 "year": metadata.get("year", ""), "doi": metadata.get("doi", ""),
+                 "work_ids": metadata.get("work_id") or "",
+                 "metadata_source": metadata.get("metadata_source", "extraction"),
+                 "category": "other", "stem": stem,
+                 "pdf_path": paper["pdf_path"], "pdf_filename": f"{paper['paper_id']}.pdf",
+                 "pdf_sha256": paper["paper_id"], "source_format": "pdf",
+                 "source_collection": "byeori-local",
+                 "text_extractor": extractor.get("ident") or "grobid",
+                 "text_extractor_version": extractor.get("version") or "",
+                 "text_extracted_date": now()[:10],
+                 "source_hash": extraction_id, "extraction_status": extraction_status,
+                 "ingest_harness": "byeori-local", "ingest_agent": "byeori-local-note",
+                 "ingest_agent_version": PROMPT_VERSION,
+                 "ingest_model_id": model, "ingest_reasoning": "default",
+                 "prompt_version": PROMPT_VERSION, "created": now(),
+                 "evidence_validation": validation_level,
+                 "generation_path": coverage["path"],
+                 "blocks_presented": f"{coverage['blocks_presented']}/{coverage['blocks_total']}",
+                 "extraction_path": f"{prefix}/document.json"}
+        if metadata.get("journal"):
+            front["journal"] = metadata["journal"]
+        # A disagreement between the page and the authority is recorded for a person to settle;
+        # this code does not pick a winner.
+        for field in ("openalex_year", "openalex_journal", "openalex_doi", "metadata_disagreement"):
+            if metadata.get(field):
+                front[field] = metadata[field]
+        front |= extra or {}
+        info = ("\n\n## 1. Document Information\n\n"
+                f"Title: {front['title'].replace(chr(10), ' ')}\n\n"
+                f"PDF SHA-256: {paper['paper_id']}\n\n")
+        return frontmatter_text(front) + body.replace("\n## 2. Key Contributions",
+                                                     info + "## 2. Key Contributions", 1)
+
+    def revalidate(self, job_id):
+        """Publish a note a failed job already wrote, when only the check has changed since.
+
+        A paper takes over an hour on this machine and the structure check is the last step, so a
+        checker that has since learned to read the model's formatting should not cost the paper
+        again. Nothing is generated: the candidate on disk is that job's own output for that
+        extraction, and the note records which job wrote it.
+        """
+        with worker_lock(self.store.root):
+            return self._revalidate(job_id)
+
+    def revalidate_all(self):
+        with worker_lock(self.store.root):
+            results = []
+            for job in self.store.jobs(limit=200):
+                if job["kind"] != "note" or job["status"] != "failed":
+                    continue
+                if not self.store.path(f"runs/{job['job_id']}/candidate.md").exists():
+                    continue
+                if self.store.papers_with_notes().get(job["paper_id"]):
+                    continue
+                try:
+                    results.append(self._revalidate(job["job_id"]))
+                except (ValueError, RuntimeError) as exc:
+                    results.append({"job_id": job["job_id"], "published": False, "error": str(exc)})
+            return {"published": sum(r.get("published", False) for r in results), "jobs": results}
+
+    def _revalidate(self, written_by):
+        prefix = f"runs/{written_by}"
+        job = self.store.job(written_by)
+        if job["kind"] != "note":
+            raise ValueError("Only a note job writes a candidate to revalidate")
+        candidate = self.store.path(f"{prefix}/candidate.md")
+        if not candidate.exists():
+            raise ValueError(f"Job {written_by} left no candidate note to revalidate")
+        paper = self.store.paper(job["paper_id"])
+        document = json.loads(self.store.path(f"{prefix}/document.json").read_text(encoding="utf-8"))
+        receipt = json.loads(self.store.path(f"{prefix}/receipt.json").read_text(encoding="utf-8"))
+        blocks = document["blocks"]
+        text = normalize_note(candidate.read_text(encoding="utf-8"))
+        validation_level = validate_note(text, blocks)
+
+        tei = self.store.path(f"{prefix}/grobid.tei.xml").read_bytes()
+        extracted = parse_metadata(tei)
+        metadata = merged(extracted, resolve(tei, document_stem(extracted, paper["title"]), blocks,
+                                             lookup=self.lookup))
+        stem = self._identity(paper, metadata)
+        coverage = receipt.get("coverage") or {"path": "single", "parts": 1,
+                                               "blocks_total": len(blocks),
+                                               "blocks_presented": len(blocks)}
+        model = (receipt.get("generation") or {}).get("model") or "unknown"
+        job_id = self.store.start(paper["paper_id"])
+        try:
+            page = self._page(paper, text, stem=stem, metadata=metadata, prefix=prefix,
+                              extraction_id=document["extraction_id"],
+                              extraction_status=document.get("extraction_status", "partial"),
+                              model=model, validation_level=validation_level, coverage=coverage,
+                              extractor=receipt.get("extractor") or {},
+                              extra={"revision_reason": "revalidated",
+                                     "written_by_job": written_by})
+            result_info = {"job_id": job_id, "paper_id": paper["paper_id"], "stem": stem,
+                           "status": "succeeded", "written_by_job": written_by,
+                           "revision_reason": "revalidated",
+                           "extraction_status": document.get("extraction_status", "partial"),
+                           "validation_level": validation_level, "coverage": coverage}
+            published = self.store.publish(
+                paper, job_id, page, extraction_id=document["extraction_id"],
+                extraction_path=f"{prefix}/document.json",
+                extraction_status=document.get("extraction_status", "partial"), model=model,
+                validation_level=validation_level, result=result_info, stem=stem,
+                metadata=metadata, summary=note_summary(page), previous_stem=paper.get("stem"))
+        except Exception as exc:
+            self.store.finish(job_id, "failed", error=str(exc), stage="revalidate")
+            raise RuntimeError(f"Job {job_id} failed: {exc}") from exc
+        return {"published": True, "written_by_job": written_by, **result_info, **published}
 
     def _stage(self, job_id, record, stage):
         record["stage"] = stage
