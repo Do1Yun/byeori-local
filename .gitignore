@@ -10,3 +10,4 @@ state/
 
 .byeori-local/
 .byeori-assistant/
+.byeori-local.pre-schema6-*/
