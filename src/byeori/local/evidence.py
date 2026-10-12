@@ -52,3 +52,37 @@ def claim_fingerprint(paper_id, claim):
                                   hashlib.sha256(source["text"].encode()).hexdigest())
                                  for source in claim["sources"])}
     return hashlib.sha256(json.dumps(packet, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+# ingest_lambda.CATALOG_SUMMARY_CHARS, repeated rather than imported: that module opens AWS
+# clients when it loads, and nothing here may need credentials.
+SUMMARY_CHARS = 260
+
+
+def note_summary(text):
+    """The note's own One-line Summary, which is what the catalogues show for it."""
+    match = re.search(r"^## One-line Summary\s*$(.*?)(?=^## )", text, re.M | re.S)
+    return " ".join(match[1].split())[:SUMMARY_CHARS] if match else ""
+
+
+def split_frontmatter(text):
+    """The note's frontmatter and its body, so one can be rewritten without touching the other."""
+    if not text.startswith("---\n"):
+        return "", text
+    end = text.find("\n---\n", 4)
+    return (text[:end + 5], text[end + 5:].lstrip("\n")) if end > 0 else ("", text)
+
+
+def parse_frontmatter(text):
+    """The note's frontmatter as fields, and the body the model wrote."""
+    front, body = split_frontmatter(text)
+    fields = {}
+    for line in front.splitlines():
+        key, separator, value = line.partition(":")
+        if not separator or line.strip() in {"---", ""}:
+            continue
+        try:
+            fields[key.strip()] = json.loads(value.strip())
+        except json.JSONDecodeError:
+            fields[key.strip()] = value.strip().strip('"')
+    return fields, body

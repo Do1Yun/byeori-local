@@ -58,8 +58,17 @@ def create_server(service=None):
 
         Poll get_job for the job's status. Its result carries answer_status 'answered' or
         'insufficient_evidence'; a refusal to answer is not an error. One question runs at a time.
+        With BYEORI_LOCAL_EXECUTOR=worker the question waits for `byeori-local worker`, which
+        outlives this server; worker_alive says whether one is running.
         """
         return questions().submit(question, paper_id)
+
+    @mcp.tool()
+    def worker_status() -> dict:
+        """The workspace worker: whether it is alive, its state, and the job it is running."""
+        service = current()
+        return service.store.worker_status() | {"executor": service.executor,
+                                                "queued_kinds": sorted(service.store.queued_kinds())}
 
     @mcp.tool()
     def cancel_job(job_id: str) -> dict:
@@ -73,8 +82,11 @@ def create_server(service=None):
 
     @mcp.tool()
     def get_job(job_id: str) -> dict:
-        """A job's status, the stage it reached, its error, and its result once it succeeded."""
-        return current().store.job(job_id)
+        """A job's status, the stage it reached, its error, and its result once it succeeded,
+        with its recent events and whether the worker that would run it is alive."""
+        store = current().store
+        return store.job(job_id) | {"events": store.events(job_id, 20),
+                                    "worker": store.worker_status()}
 
     @mcp.tool()
     def list_jobs(limit: int = 20) -> list[dict]:

@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from .locking import inference_lock, runtime_path
+from .locking import inference_lock, runtime_path, try_lock
 
 # Characters per token, or tokens per character, measured against two prompts this workspace
 # actually sent to qwen3:8b: a 34,628-character paper that came back as 8,567 prompt tokens
@@ -63,6 +63,20 @@ class UnsupportedThinking(ModelError):
 
 class ModelTimeout(ModelError):
     error_code = "outcome_unknown"
+
+
+class OutputTruncated(ModelError):
+    """The model used every output token it was allowed: what it wrote is incomplete."""
+    error_code = "output_truncated"
+
+
+class AbnormalStop(ModelError):
+    error_code = "abnormal_stop"
+
+
+class RecoveryPending(ModelError):
+    """An earlier request on this endpoint may still be computing; nothing was sent."""
+    error_code = "recovery_pending"
 
 
 @dataclass(frozen=True)
@@ -118,6 +132,29 @@ class OllamaBackend:
     @property
     def inflight_path(self):
         return runtime_path(self.url).with_suffix(".inflight.json")
+
+    def recovery_pending(self):
+        """Whether a person must confirm the server is idle before the next call.
+
+        A timeout marker always blocks. An in-flight marker blocks only when no process holds the
+        endpoint lock: beside a held lock it is a call that is still running, not an abandoned one.
+        """
+        if self.blocked_path.exists():
+            return True
+        if not self.inflight_path.exists():
+            return False
+        with try_lock(runtime_path(self.url)) as acquired:
+            return acquired and self.inflight_path.exists()
+
+    def fingerprint(self):
+        """What a stored digest depends on in this backend: the exact model and its budget."""
+        details = self.doctor()
+        if not details["model_available"]:
+            raise ModelError("Requested model is not installed")
+        return {"model": self.model, "model_digest": details["digest"],
+                "template_sha256": details["template_sha256"],
+                "server_version": details["server_version"],
+                "context": self.context, "output": self.output}
 
     def recover_runtime(self, *, acknowledge=False):
         if not acknowledge:
@@ -207,22 +244,29 @@ class OllamaBackend:
                 "server_version": version, "capabilities": show.get("capabilities") or [],
                 "runtime_lock_path": str(runtime_path(self.url)),
                 "template_sha256": hashlib.sha256(str(show.get("template", "")).encode()).hexdigest(),
-                "recovery_pending": self.blocked_path.exists() or self.inflight_path.exists()}
+                "recovery_pending": self.recovery_pending()}
 
-    def generate(self, system, prompt, *, think=None, response_format=None):
+    def generate(self, system, prompt, *, think=None, response_format=None, num_predict=None):
         with inference_lock(self.url):
+            # Holding the lock, any marker left here belongs to a process that is gone.
             if self.blocked_path.exists() or self.inflight_path.exists():
-                raise ModelError("Endpoint recovery_pending after an unfinished request; confirm the server is idle before retrying")
-            return self._generate(system, prompt, think=think, response_format=response_format)
+                raise RecoveryPending("Endpoint recovery_pending after an unfinished request; "
+                                      "confirm the server is idle before retrying")
+            return self._generate(system, prompt, think=think, response_format=response_format,
+                                  num_predict=num_predict)
 
-    def _generate(self, system, prompt, *, think=None, response_format=None):
+    def _generate(self, system, prompt, *, think=None, response_format=None, num_predict=None):
         if not self.model:
             raise ModelError("Set BYEORI_LOCAL_MODEL or --model to an installed Ollama model")
+        output = self.output if num_predict is None else int(num_predict)
+        if output < 1:
+            raise ValueError("num_predict must be positive")
+        budget = self.context - output - RESERVE_TOKENS
         estimated = estimate_tokens(system + prompt)
-        if estimated > self.input_budget:
+        if estimated > budget:
             raise ModelError(f"Input needs about {estimated} tokens and the budget is "
-                             f"{self.input_budget} (context {self.context} less output "
-                             f"{self.output} and {RESERVE_TOKENS} reserved). Nothing was "
+                             f"{budget} (context {self.context} less output "
+                             f"{output} and {RESERVE_TOKENS} reserved). Nothing was "
                              "truncated; write the note in parts or raise the context.")
         details = self.doctor()
         if not details["model_available"]:
@@ -232,7 +276,7 @@ class OllamaBackend:
         body = {
             "model": self.model, "stream": False,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-            "options": {"num_ctx": self.context, "num_predict": self.output, "temperature": 0},
+            "options": {"num_ctx": self.context, "num_predict": output, "temperature": 0},
         }
         if think is not None:
             body["think"] = think
@@ -249,8 +293,16 @@ class OllamaBackend:
             body.pop("think", None)
             value, payload = self._chat(body)
         text = (value.get("message") or {}).get("content", "")
-        if value.get("done") is not True or value.get("done_reason") != "stop":
-            raise ModelError("Model did not finish normally; incomplete output was not published")
+        if value.get("done") is not True:
+            raise AbnormalStop("Model did not finish normally (no done flag); incomplete output "
+                               "was not published")
+        if value.get("done_reason") == "length":
+            raise OutputTruncated(f"Model did not finish normally: it reached the {output}-token "
+                                  "output limit; incomplete output was not published")
+        if value.get("done_reason") != "stop":
+            raise AbnormalStop(f"Model did not finish normally (done_reason "
+                               f"{str(value.get('done_reason'))[:40]!r}); incomplete output "
+                               "was not published")
         if not isinstance(text, str) or not text.strip():
             raise ModelError("Model returned no answer text")
         measured = int(value.get("prompt_eval_count", 0))
@@ -267,5 +319,6 @@ class OllamaBackend:
                            "endpoint_policy": self.endpoint_policy,
                            "payload_sha256": hashlib.sha256(payload).hexdigest(),
                            "think": body.get("think"), "input_estimate": estimated,
+                           "done_reason": value.get("done_reason"), "num_predict": output,
                            "truncation_ratio": self.truncation_ratio,
                            "token_accounting": "reported" if measured else "unverified"})

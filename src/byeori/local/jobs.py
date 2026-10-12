@@ -10,6 +10,30 @@ from .locking import serial_lock
 WAIT_INTERVAL = 0.1
 
 
+def answer_question(service, job, lease=None):
+    """Run one claimed question and record how it ended; never raises for a model failure."""
+    store = service.store
+    job_id, request = job["job_id"], job["request"]
+    if job["cancel_requested"] is not None:
+        store.finish(job_id, "cancelled", stage="queued", error="Cancelled before the model was called",
+                     error_code="cancelled", lease=lease)
+        return
+    if lease is not None:
+        store.set_stage(job_id, "answer", lease=lease)
+    try:
+        answer = service.ask(request["question"], request.get("paper_id"))
+    except Exception as exc:                       # a question must not end the worker
+        store.finish(job_id, "failed", stage="answer", error=str(exc),
+                     error_code=getattr(exc, "error_code", None) or "failed", lease=lease)
+        return
+    if store.job(job_id)["cancel_requested"] is not None:
+        store.finish(job_id, "cancelled", stage="answer", error_code="cancelled", lease=lease,
+                     error="Cancelled while the model was answering; the answer it returned was "
+                           "discarded")
+    else:
+        store.finish(job_id, "succeeded", result=answer, stage="answer", lease=lease)
+
+
 class QuestionJobs:
     """One question at a time, on a background thread, recorded in the workspace.
 
@@ -18,9 +42,12 @@ class QuestionJobs:
     this machine would compete with the first for the same memory.
     """
 
-    def __init__(self, service):
+    def __init__(self, service, executor=None):
         self.service = service
         self.store = service.store
+        # inline: this process answers on its own thread. worker: the question waits in the
+        # workspace queue for `byeori-local worker`, which outlives the process that asked.
+        self.executor = executor or getattr(service, "executor", "inline")
         self._lock = threading.Lock()
         self._worker = None
         self.owner_token = uuid.uuid4().hex
@@ -35,10 +62,19 @@ class QuestionJobs:
             raise ValueError("Question must contain 1 to 4000 characters")
         if paper_id is not None:
             self.store.paper(paper_id)        # fail now, not inside the worker
+        if self.executor == "worker":
+            job_id = self.store.enqueue("question", paper_id=paper_id,
+                                        request={"question": question, "paper_id": paper_id})
+            worker = self.store.worker_status()
+            submitted = {"job_id": job_id, "status": "queued", "poll_with": "get_job",
+                         "executor": "worker", "worker_alive": worker["alive"]}
+            if not worker["alive"]:
+                submitted["diagnostic"] = "worker_unavailable"
+            return submitted
         with self._lock:
             job_id = self.store.start_question(question, paper_id, owner_token=self.owner_token)
             self._start_worker()
-        return {"job_id": job_id, "status": "queued", "poll_with": "get_job"}
+        return {"job_id": job_id, "status": "queued", "poll_with": "get_job", "executor": "inline"}
 
     def cancel(self, job_id):
         """Accepting a cancellation and having stopped are different facts, so both are returned."""
@@ -79,19 +115,4 @@ class QuestionJobs:
                 self._answer(job)
 
     def _answer(self, job):
-        job_id, request = job["job_id"], job["request"]
-        if job["cancel_requested"] is not None:
-            self.store.finish(job_id, "cancelled", stage="queued",
-                              error="Cancelled before the model was called")
-            return
-        try:
-            answer = self.service.ask(request["question"], request.get("paper_id"))
-        except Exception as exc:                       # a question must not end the worker
-            self.store.finish(job_id, "failed", stage="answer", error=str(exc))
-            return
-        if self.store.job(job_id)["cancel_requested"] is not None:
-            self.store.finish(job_id, "cancelled", stage="answer",
-                              error="Cancelled while the model was answering; the answer "
-                                    "it returned was discarded")
-        else:
-            self.store.finish(job_id, "succeeded", result=answer, stage="answer")
+        answer_question(self.service, job)

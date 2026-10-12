@@ -15,9 +15,19 @@ import uuid
 
 from byeori.wiki_search import search_index
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 JOB_STATUSES = ("queued", "running", "succeeded", "failed", "cancelled", "interrupted")
 TERMINAL_STATUSES = ("succeeded", "failed", "cancelled", "interrupted")
+JOB_KINDS = ("note", "question", "metadata", "revalidate")
+# inline: run by the process that submitted it (the CLI in the foreground, or the MCP server's
+# question thread). worker: left in the queue for `byeori-local worker`, which may be another
+# process entirely. A row written before this column existed is inline.
+EXECUTORS = ("inline", "worker")
+QUESTION_PRIORITY = 10
+# The worker writes a heartbeat every 15 seconds while it runs a job and while it waits.
+WORKER_STALE_SECONDS = 60
+INLINE_INTERRUPTED = "Worker stopped before completion; rerun process to retry"
+ALTER_COLUMN = re.compile(r"ALTER TABLE (\w+) ADD COLUMN (\w+)\b", re.I)
 # Columns added after a workspace may already hold notes, so they are added in place.
 MIGRATIONS = {3: ["ALTER TABLE jobs ADD COLUMN kind TEXT",
                   "ALTER TABLE jobs ADD COLUMN request TEXT",
@@ -26,7 +36,32 @@ MIGRATIONS = {3: ["ALTER TABLE jobs ADD COLUMN kind TEXT",
                   "ALTER TABLE docs ADD COLUMN work_ids TEXT",
                   "ALTER TABLE docs ADD COLUMN summary TEXT"],
               5: ["ALTER TABLE note_versions ADD COLUMN document_sha256 TEXT",
-                  "ALTER TABLE jobs ADD COLUMN owner_token TEXT"]}
+                  "ALTER TABLE jobs ADD COLUMN owner_token TEXT"],
+              6: ["ALTER TABLE jobs ADD COLUMN worker_id TEXT",
+                  "ALTER TABLE jobs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1",
+                  "ALTER TABLE jobs ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3",
+                  "ALTER TABLE jobs ADD COLUMN heartbeat_at TEXT",
+                  "ALTER TABLE jobs ADD COLUMN started_at TEXT",
+                  "ALTER TABLE jobs ADD COLUMN cancel_ack_at TEXT",
+                  "ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0",
+                  "ALTER TABLE jobs ADD COLUMN executor TEXT",
+                  "ALTER TABLE jobs ADD COLUMN resumed_from TEXT",
+                  "ALTER TABLE jobs ADD COLUMN error_code TEXT",
+                  "CREATE INDEX IF NOT EXISTS jobs_claim ON jobs (status, executor, priority, created_at)",
+                  "CREATE TABLE IF NOT EXISTS workers ("
+                  " worker_id TEXT PRIMARY KEY, pid INTEGER NOT NULL, process_started TEXT,"
+                  " hostname TEXT, code_version TEXT, started_at TEXT NOT NULL,"
+                  " heartbeat_at TEXT NOT NULL, state TEXT NOT NULL, current_job_id TEXT,"
+                  " stopped_at TEXT)",
+                  "CREATE TABLE IF NOT EXISTS checkpoints ("
+                  " checkpoint_id TEXT PRIMARY KEY, paper_id TEXT NOT NULL, stage TEXT NOT NULL,"
+                  " key_sha256 TEXT NOT NULL, job_id TEXT NOT NULL, created_at TEXT NOT NULL,"
+                  " files TEXT NOT NULL, meta TEXT NOT NULL)",
+                  "CREATE INDEX IF NOT EXISTS checkpoints_key ON checkpoints (paper_id, stage, key_sha256)",
+                  "CREATE TABLE IF NOT EXISTS job_events ("
+                  " event_id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL,"
+                  " at TEXT NOT NULL, event TEXT NOT NULL, worker_id TEXT, detail TEXT)",
+                  "CREATE INDEX IF NOT EXISTS job_events_job ON job_events (job_id, event_id)"]}
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS papers (
@@ -36,8 +71,28 @@ CREATE UNIQUE INDEX IF NOT EXISTS papers_stem ON papers (stem);
 CREATE TABLE IF NOT EXISTS jobs (
     job_id TEXT PRIMARY KEY, paper_id TEXT, status TEXT NOT NULL, stage TEXT,
     created_at TEXT NOT NULL, finished_at TEXT, error TEXT, result TEXT,
-    kind TEXT, request TEXT, cancel_requested TEXT, owner_token TEXT);
+    kind TEXT, request TEXT, cancel_requested TEXT, owner_token TEXT,
+    worker_id TEXT, attempt INTEGER NOT NULL DEFAULT 1, max_attempts INTEGER NOT NULL DEFAULT 3,
+    heartbeat_at TEXT, started_at TEXT, cancel_ack_at TEXT, priority INTEGER NOT NULL DEFAULT 0,
+    executor TEXT, resumed_from TEXT, error_code TEXT);
 CREATE INDEX IF NOT EXISTS jobs_queue ON jobs (kind, status, created_at);
+CREATE INDEX IF NOT EXISTS jobs_claim ON jobs (status, executor, priority, created_at);
+-- The worker that holds .worker.lock, and when it last said it was alive.
+CREATE TABLE IF NOT EXISTS workers (
+    worker_id TEXT PRIMARY KEY, pid INTEGER NOT NULL, process_started TEXT, hostname TEXT,
+    code_version TEXT, started_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL,
+    state TEXT NOT NULL, current_job_id TEXT, stopped_at TEXT);
+-- A stage of a paper's processing that a later job may read instead of computing again. The
+-- files stay in the run that wrote them; a checkpoint only points at them, with their hashes.
+CREATE TABLE IF NOT EXISTS checkpoints (
+    checkpoint_id TEXT PRIMARY KEY, paper_id TEXT NOT NULL, stage TEXT NOT NULL,
+    key_sha256 TEXT NOT NULL, job_id TEXT NOT NULL, created_at TEXT NOT NULL,
+    files TEXT NOT NULL, meta TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS checkpoints_key ON checkpoints (paper_id, stage, key_sha256);
+CREATE TABLE IF NOT EXISTS job_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, at TEXT NOT NULL,
+    event TEXT NOT NULL, worker_id TEXT, detail TEXT);
+CREATE INDEX IF NOT EXISTS job_events_job ON job_events (job_id, event_id);
 -- Every note ever published stays addressable: a citation written last month names the
 -- revision it read, so it keeps resolving to the paragraph it actually cited.
 CREATE TABLE IF NOT EXISTS note_versions (
@@ -64,12 +119,86 @@ CREATE TABLE IF NOT EXISTS metadata_checks (
 """
 
 
+class SchemaMigrationRequired(ValueError):
+    error_code = "schema_migration_required"
+
+
+class StaleLease(RuntimeError):
+    """A worker tried to change a job it no longer owns."""
+    error_code = "stale_lease"
+
+
 def now():
     return datetime.now(UTC).isoformat()
 
 
+def _event(db, job_id, event, worker_id=None, detail=None):
+    db.execute("INSERT INTO job_events(job_id,at,event,worker_id,detail) VALUES (?,?,?,?,?)",
+               (job_id, now(), event, worker_id,
+                json.dumps(detail, ensure_ascii=False) if detail is not None else None))
+
+
+def _apply(db, statement):
+    """One migration statement, safe to apply to a workspace that already has its effect."""
+    column = ALTER_COLUMN.match(statement)
+    if column:
+        table, name = column.groups()
+        if name not in {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}:
+            db.execute(statement)
+    elif "IF NOT EXISTS" in statement.upper():
+        db.execute(statement)
+    else:
+        raise ValueError(f"Migration statement is not idempotent: {statement[:60]}")
+
+
+def migration_plan(root):
+    """What opening this workspace would change, read without changing anything."""
+    path = Path(root).expanduser().resolve() / "catalog.sqlite3"
+    if not path.exists():
+        raise ValueError(f"No catalog at {path}")
+    try:
+        con = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+        con.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
+    except sqlite3.OperationalError:
+        # A WAL database whose shared-memory file is gone cannot be opened read-only; a normal
+        # connection that only reads changes nothing either.
+        con = sqlite3.connect(path)
+    try:
+        has_version = con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND "
+                                  "name='schema_version'").fetchone()
+        row = con.execute("SELECT version FROM schema_version").fetchone() if has_version else None
+        journal = con.execute("PRAGMA journal_mode").fetchone()[0]
+    finally:
+        con.close()
+    current = row[0] if row else None
+    steps = ({step: MIGRATIONS[step] for step in range(current + 1, SCHEMA_VERSION + 1)
+              if step in MIGRATIONS} if current is not None and current < SCHEMA_VERSION else {})
+    return {"workspace": str(path.parent), "current": current, "target": SCHEMA_VERSION,
+            "up_to_date": current == SCHEMA_VERSION,
+            "unsupported": current is not None and current > SCHEMA_VERSION,
+            "steps": steps, "journal_mode": journal, "backup_recommended": bool(steps)}
+
+
 def digest(value: bytes):
     return hashlib.sha256(value).hexdigest()
+
+
+def code_version():
+    """The release and, when this runs from a checkout, the commit that is doing the work."""
+    try:
+        from importlib.metadata import version
+        package = version("byeori")
+    except Exception:                                   # noqa: BLE001 - informational only
+        package = None
+    commit = None
+    try:
+        result = subprocess.run(["git", "-C", str(Path(__file__).resolve().parents[3]), "rev-parse",
+                                 "--short", "HEAD"], capture_output=True, text=True, timeout=2,
+                                check=False)
+        commit = result.stdout.strip() or None if result.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return {"package": package, "git": commit}
 
 
 def process_identity(pid):
@@ -94,12 +223,15 @@ def _alive(pid, started=None):
 
 
 class LocalStore:
-    def __init__(self, root: Path, *, create=True):
+    def __init__(self, root: Path, *, create=True, migrate=None, sweep_orphans=True):
         self.root = root.expanduser().resolve()
         if not self.root.is_dir():
             if not create:
                 raise ValueError(f"Workspace does not exist: {self.root}")
             self.root.mkdir(parents=True, exist_ok=True)
+        if migrate is None:
+            migrate = os.environ.get("BYEORI_LOCAL_AUTO_MIGRATE", "on").lower() not in {"off", "0", "false"}
+        self.migrated_from = None
         with self.db() as db:
             self._upgrade(db)
             # Migrate before the schema script runs: its indexes name columns a migration adds.
@@ -107,30 +239,68 @@ class LocalStore:
                           "name='schema_version'").fetchone():
                 row = db.execute("SELECT version FROM schema_version").fetchone()
                 if row and row["version"] != SCHEMA_VERSION:
-                    self._migrate(db, row["version"])
+                    if row["version"] < SCHEMA_VERSION and not migrate:
+                        raise SchemaMigrationRequired(
+                            f"Workspace schema is {row['version']} and this release reads "
+                            f"{SCHEMA_VERSION}; run 'byeori-local migrate --plan', back the "
+                            "workspace up, then 'byeori-local migrate --apply'")
+                    self.migrated_from = self._migrate(db, row["version"])
             db.executescript(SCHEMA)
             if db.execute("SELECT version FROM schema_version").fetchone() is None:
                 db.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
+        self._enable_wal()
         # Opening the workspace is when an orphan becomes visible, so it is also when it is
         # recorded as one: a reader must never be told a question is still waiting for an answer
         # that no process is going to write.
-        self.sweep_orphaned_questions()
+        if sweep_orphans:
+            self.sweep_orphaned_questions()
+
+    def _enable_wal(self):
+        """Readers no longer wait for a writer: a worker, the MCP server and the CLI share it."""
+        con = sqlite3.connect(self.root / "catalog.sqlite3", timeout=5)
+        try:
+            if con.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+                con.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            pass                                   # another connection is busy; the next open retries
+        finally:
+            con.close()
+
+    def journal_mode(self):
+        with self.db() as db:
+            return db.execute("PRAGMA journal_mode").fetchone()[0]
+
+    def schema_version(self):
+        with self.db() as db:
+            return db.execute("SELECT version FROM schema_version").fetchone()["version"]
 
     @staticmethod
     def _migrate(db, version):  # noqa: C901
-        """Carry a workspace forward in place. Notes, runs and originals are never rewritten."""
+        """Carry a workspace forward in place, all steps or none. Notes, runs and originals are
+        never rewritten. Returns the version it started from, or None if another process did it."""
         if version > SCHEMA_VERSION:
             raise ValueError(f"Workspace schema is version {version} and this release reads "
                              f"{SCHEMA_VERSION}; use the release that wrote it.")
-        for step in range(version + 1, SCHEMA_VERSION + 1):
-            if step not in MIGRATIONS:
-                raise ValueError(f"No migration to schema version {step}; every file is preserved, "
-                                 "so a workspace created by this release can republish from them.")
-            for statement in MIGRATIONS[step]:
-                table, column = statement.split()[2], statement.split()[-2]
-                if column not in {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}:
-                    db.execute(statement)
-        db.execute("UPDATE schema_version SET version=?", (SCHEMA_VERSION,))
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            # Another process may have migrated while this one waited for the write lock.
+            version = db.execute("SELECT version FROM schema_version").fetchone()["version"]
+            if version >= SCHEMA_VERSION:
+                db.commit()
+                return None
+            for step in range(version + 1, SCHEMA_VERSION + 1):
+                if step not in MIGRATIONS:
+                    raise ValueError(f"No migration to schema version {step}; every file is "
+                                     "preserved, so a workspace created by this release can "
+                                     "republish from them.")
+                for statement in MIGRATIONS[step]:
+                    _apply(db, statement)
+            db.execute("UPDATE schema_version SET version=?", (SCHEMA_VERSION,))
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+        return version
 
     @staticmethod
     def _upgrade(db):
@@ -307,6 +477,15 @@ class LocalStore:
             if cursor is None:
                 return
 
+    def last_note_published(self, paper_id):
+        """When a model-written note for this paper was last published; checkpoints older than
+        that belong to finished work, and a paper processed again starts over."""
+        with self.db() as db:
+            row = db.execute("SELECT MAX(finished_at) AS at FROM jobs WHERE paper_id=? AND "
+                             "status='succeeded' AND (kind IS NULL OR kind IN ('note','revalidate'))",
+                             (paper_id,)).fetchone()
+        return row["at"]
+
     def record_metadata_check(self, paper_id, resolved):
         with self.db() as db:
             db.execute("INSERT INTO metadata_checks VALUES (?,?,?,?,?)",
@@ -315,12 +494,224 @@ class LocalStore:
 
     TERMINAL = TERMINAL_STATUSES
 
-    def start(self, paper_id):
-        job_id = uuid.uuid4().hex
+    def start(self, paper_id, kind="note"):
+        """A job this process runs at once, in the foreground."""
+        if kind not in JOB_KINDS:
+            raise ValueError(f"Job kind must be one of {', '.join(JOB_KINDS)}")
+        job_id, started = uuid.uuid4().hex, now()
         with self.db() as db:
-            db.execute("INSERT INTO jobs(job_id,paper_id,status,stage,created_at,kind) "
-                       "VALUES (?,?,?,?,?,?)", (job_id, paper_id, "running", "start", now(), "note"))
+            db.execute("INSERT INTO jobs(job_id,paper_id,status,stage,created_at,kind,executor,"
+                       "started_at,heartbeat_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                       (job_id, paper_id, "running", "start", started, kind, "inline", started, started))
+            _event(db, job_id, "started", detail={"kind": kind, "executor": "inline"})
         return job_id
+
+    # --- the worker queue ----------------------------------------------------------------
+
+    def enqueue(self, kind, *, paper_id=None, request=None, priority=None, executor="worker",
+                resumed_from=None, attempt=1, max_attempts=3):
+        """A queued job for `byeori-local worker`; nothing runs until a worker claims it."""
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            return self._enqueue(db, kind, paper_id=paper_id, request=request, priority=priority,
+                                 executor=executor, resumed_from=resumed_from, attempt=attempt,
+                                 max_attempts=max_attempts)
+
+    @staticmethod
+    def _enqueue(db, kind, *, paper_id=None, request=None, priority=None, executor="worker",
+                 resumed_from=None, attempt=1, max_attempts=3):
+        if kind not in JOB_KINDS:
+            raise ValueError(f"Job kind must be one of {', '.join(JOB_KINDS)}")
+        if executor not in EXECUTORS:
+            raise ValueError(f"Executor must be one of {', '.join(EXECUTORS)}")
+        if priority is None:
+            priority = QUESTION_PRIORITY if kind == "question" else 0
+        job_id = uuid.uuid4().hex
+        db.execute("INSERT INTO jobs(job_id,paper_id,status,stage,created_at,kind,request,priority,"
+                   "executor,resumed_from,attempt,max_attempts) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (job_id, paper_id, "queued", "queued", now(), kind,
+                    json.dumps(request, ensure_ascii=False) if request is not None else None,
+                    priority, executor, resumed_from, attempt, max_attempts))
+        _event(db, job_id, "enqueued", detail={"kind": kind, "executor": executor,
+                                               "resumed_from": resumed_from, "attempt": attempt})
+        return job_id
+
+    def active_job(self, paper_id, kind):
+        """A queued or running job of this kind for this paper, so it is not submitted twice."""
+        with self.db() as db:
+            row = db.execute("SELECT job_id FROM jobs WHERE paper_id=? AND kind=? AND status IN "
+                             "('queued','running') ORDER BY created_at LIMIT 1",
+                             (paper_id, kind)).fetchone()
+        return row["job_id"] if row else None
+
+    def queued_kinds(self):
+        with self.db() as db:
+            return {row["kind"] for row in db.execute(
+                "SELECT DISTINCT kind FROM jobs WHERE status='queued' AND executor='worker'")}
+
+    def claim_next(self, worker_id, kinds=None):
+        """The worker's next job: questions before papers, then oldest first."""
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            query, params = "SELECT job_id FROM jobs WHERE status='queued' AND executor='worker'", []
+            if kinds:
+                query += f" AND kind IN ({','.join('?' * len(kinds))})"
+                params.extend(kinds)
+            row = db.execute(query + " ORDER BY priority DESC, created_at, job_id LIMIT 1",
+                             params).fetchone()
+            if row is None:
+                return None
+            started = now()
+            claimed = db.execute("UPDATE jobs SET status='running', stage='claimed', worker_id=?, "
+                                 "started_at=?, heartbeat_at=? WHERE job_id=? AND status='queued'",
+                                 (worker_id, started, started, row["job_id"])).rowcount
+            if claimed != 1:
+                return None
+            _event(db, row["job_id"], "claimed", worker_id=worker_id)
+        return self.job(row["job_id"])
+
+    def heartbeat(self, job_id, worker_id):
+        beat = now()
+        with self.db() as db:
+            db.execute("UPDATE jobs SET heartbeat_at=? WHERE job_id=? AND worker_id=? "
+                       "AND status='running'", (beat, job_id, worker_id))
+            db.execute("UPDATE workers SET heartbeat_at=? WHERE worker_id=?", (beat, worker_id))
+
+    def register_worker(self, worker_id, *, pid, process_started, hostname, code_version):
+        started = now()
+        with self.db() as db:
+            db.execute("INSERT INTO workers(worker_id,pid,process_started,hostname,code_version,"
+                       "started_at,heartbeat_at,state) VALUES (?,?,?,?,?,?,?,?)",
+                       (worker_id, pid, process_started, hostname, code_version, started, started,
+                        "starting"))
+
+    def update_worker(self, worker_id, state, current_job_id=None):
+        with self.db() as db:
+            db.execute("UPDATE workers SET state=?, current_job_id=?, heartbeat_at=? WHERE worker_id=?",
+                       (state, current_job_id, now(), worker_id))
+
+    def stop_worker(self, worker_id, state="stopped"):
+        stopped = now()
+        with self.db() as db:
+            db.execute("UPDATE workers SET state=?, current_job_id=NULL, stopped_at=?, heartbeat_at=? "
+                       "WHERE worker_id=?", (state, stopped, stopped, worker_id))
+
+    def worker_status(self):
+        """The newest worker and whether it is alive: its process exists and it beat recently."""
+        with self.db() as db:
+            row = db.execute("SELECT * FROM workers ORDER BY started_at DESC, worker_id DESC "
+                             "LIMIT 1").fetchone()
+        if row is None:
+            return {"worker_id": None, "alive": False, "state": None}
+        age = (datetime.now(UTC) - datetime.fromisoformat(row["heartbeat_at"])).total_seconds()
+        alive = (row["state"] != "stopped" and age < WORKER_STALE_SECONDS
+                 and _alive(row["pid"], row["process_started"]))
+        return dict(row) | {"alive": alive, "heartbeat_age_seconds": round(age, 1)}
+
+    def event(self, job_id, event, *, worker_id=None, detail=None):
+        with self.db() as db:
+            _event(db, job_id, event, worker_id, detail)
+
+    def events(self, job_id, limit=50):
+        with self.db() as db:
+            rows = db.execute("SELECT * FROM job_events WHERE job_id=? ORDER BY event_id DESC LIMIT ?",
+                              (job_id, limit)).fetchall()
+        return [dict(row) | {"detail": json.loads(row["detail"]) if row["detail"] else None}
+                for row in reversed(rows)]
+
+    def sweep_running_jobs(self, *, requeue=True):
+        """Every job left running by a process that held .worker.lock, now that this one holds it.
+
+        Holding the lock proves no other worker or foreground processing is alive. A worker's job
+        is queued again as a new job that names it, up to its attempt limit; checkpoints make the
+        retry cheap. A foreground job is not: the person who ran it reruns it. Questions the MCP
+        server's own thread runs are not this lock's to judge.
+        """
+        interrupted, requeued = [], {}
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT * FROM jobs WHERE status='running' AND (executor='worker' OR "
+                "((executor IS NULL OR executor='inline') AND (kind IS NULL OR kind != 'question')))"
+            ).fetchall()
+            for row in rows:
+                interrupted.append(row["job_id"])
+                again = self._interrupt(db, row, requeue=requeue)
+                if again:
+                    requeued[row["job_id"]] = again
+        return {"interrupted": interrupted, "requeued": requeued}
+
+    def mark_restored(self, backup_created_at):
+        """A restored workspace runs nothing: what was running when the backup was taken is
+        recorded as interrupted, and every worker it remembers as stopped."""
+        ended = now()
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            running = [row["job_id"] for row in db.execute("SELECT job_id FROM jobs WHERE status='running'")]
+            for job_id in running:
+                db.execute("UPDATE jobs SET status='interrupted', finished_at=?, error=?, "
+                           "error_code='restored_while_running' WHERE job_id=?",
+                           (ended, f"Running when the backup of {backup_created_at} was taken; "
+                                   "restored, not resumed", job_id))
+                _event(db, job_id, "interrupted", detail={"error_code": "restored_while_running"})
+            db.execute("UPDATE workers SET state='stopped', current_job_id=NULL, "
+                       "stopped_at=COALESCE(stopped_at, ?) WHERE state != 'stopped'", (ended,))
+        return running
+
+    def interrupt(self, job_id, *, lease=None, requeue=True, error=None):
+        """A job its worker stopped at a safe point; returns the job that continues it, if any."""
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            if row is None:
+                raise ValueError("Unknown job ID")
+            if lease is not None and row["worker_id"] != lease:
+                raise StaleLease(f"Job {job_id} is not owned by worker {lease}")
+            if row["status"] != "running":
+                return None
+            return self._interrupt(db, row, requeue=requeue, error=error)
+
+    def _interrupt(self, db, row, *, requeue, error=None):
+        worker = row["executor"] == "worker"
+        eligible = worker and requeue and row["cancel_requested"] is None
+        again = eligible and (row["attempt"] or 1) < (row["max_attempts"] or 3)
+        code = "max_attempts_exhausted" if eligible and not again else "worker_interrupted"
+        if error is None:
+            error = (INLINE_INTERRUPTED if not worker else
+                     "The worker stopped before this job finished; "
+                     + ("it was queued again" if again else "it was not queued again"))
+        stopped = now()
+        db.execute("UPDATE jobs SET status='interrupted', finished_at=?, error=?, error_code=?, "
+                   "cancel_ack_at=CASE WHEN cancel_requested IS NOT NULL "
+                   "THEN COALESCE(cancel_ack_at, ?) ELSE cancel_ack_at END WHERE job_id=?",
+                   (stopped, error, code, stopped, row["job_id"]))
+        _event(db, row["job_id"], "interrupted", row["worker_id"], {"error_code": code})
+        if not again:
+            return None
+        follower = self._requeue_row(db, row)
+        _event(db, row["job_id"], "requeued", detail={"as": follower})
+        return follower
+
+    def _requeue_row(self, db, row):
+        request = row["request"]
+        return self._enqueue(db, row["kind"] or "note", paper_id=row["paper_id"],
+                             request=json.loads(request) if request else None,
+                             priority=row["priority"], executor="worker",
+                             resumed_from=row["job_id"], attempt=(row["attempt"] or 1) + 1,
+                             max_attempts=row["max_attempts"] or 3)
+
+    def requeue(self, job_id, *, reason):
+        """A failed worker job whose cause was outside it, queued again within its attempt limit."""
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            if (row is None or row["status"] != "failed" or row["executor"] != "worker"
+                    or row["cancel_requested"] is not None
+                    or (row["attempt"] or 1) >= (row["max_attempts"] or 3)):
+                return None
+            follower = self._requeue_row(db, row)
+            _event(db, job_id, "requeued", detail={"as": follower, "reason": reason})
+            return follower
 
     def start_question(self, question, paper_id=None, *, owner_token=None):
         """A question is recorded before the model is called, so it is never an unlogged answer."""
@@ -331,9 +722,11 @@ class LocalStore:
                               "process_started": process_identity(os.getpid())},
                              ensure_ascii=False)
         with self.db() as db:
-            db.execute("INSERT INTO jobs(job_id,paper_id,status,stage,created_at,kind,request,owner_token) "
-                       "VALUES (?,?,?,?,?,?,?,?)",
-                       (job_id, paper_id, "queued", "queued", now(), "question", request, owner_token))
+            db.execute("INSERT INTO jobs(job_id,paper_id,status,stage,created_at,kind,request,"
+                       "owner_token,executor,priority) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                       (job_id, paper_id, "queued", "queued", now(), "question", request, owner_token,
+                        "inline", QUESTION_PRIORITY))
+            _event(db, job_id, "enqueued", detail={"kind": "question", "executor": "inline"})
         return job_id
 
     def orphaned_questions(self):
@@ -341,6 +734,9 @@ class LocalStore:
         orphans = []
         for job in self.iter_jobs():
             if job["kind"] != "question" or job["status"] not in {"queued", "running"}:
+                continue
+            if job.get("executor") == "worker":
+                # A worker's question outlives whoever submitted it; the worker judges its own.
                 continue
             request = job["request"] if isinstance(job["request"], dict) else {}
             pid = request.get("pid")
@@ -359,12 +755,15 @@ class LocalStore:
         with self.db() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM jobs WHERE kind='question' AND status='queued' "
+                             "AND (executor IS NULL OR executor='inline') "
                              "AND owner_token IS ? ORDER BY created_at,job_id LIMIT 1",
                              (owner_token,)).fetchone()
             if row is None:
                 return None
-            db.execute("UPDATE jobs SET status='running', stage='answer' WHERE job_id=?",
-                       (row["job_id"],))
+            started = now()
+            db.execute("UPDATE jobs SET status='running', stage='answer', started_at=?, "
+                       "heartbeat_at=? WHERE job_id=?", (started, started, row["job_id"]))
+            _event(db, row["job_id"], "claimed", detail={"executor": "inline"})
         return self.job(row["job_id"])
 
     def request_cancel(self, job_id):
@@ -375,9 +774,11 @@ class LocalStore:
                 raise ValueError("Unknown job ID")
             if row["status"] not in TERMINAL_STATUSES and row["cancel_requested"] is None:
                 db.execute("UPDATE jobs SET cancel_requested=? WHERE job_id=?", (now(), job_id))
+                _event(db, job_id, "cancel_requested", detail={"status": row["status"]})
                 if row["status"] == "queued":
                     self._record_terminal(db, job_id, "cancelled", None,
-                                          "Cancelled before the model was called", "queued")
+                                          "Cancelled before the model was called", "queued",
+                                          error_code="cancelled")
         return self.job(job_id)
 
     def job(self, job_id):
@@ -386,29 +787,49 @@ class LocalStore:
             raise ValueError("Unknown job ID")
         return rows[0]
 
-    def set_stage(self, job_id, stage):
-        """Where a running job has got to. A paper can take half an hour; a reader should see it."""
-        with self.db() as db:
-            db.execute("UPDATE jobs SET stage=? WHERE job_id=? AND status='running'",
-                       (stage, job_id))
+    def set_stage(self, job_id, stage, *, lease=None):
+        """Where a running job has got to. A paper can take half an hour; a reader should see it.
 
-    def finish(self, job_id, status, result=None, error=None, stage=None):
+        Returns when cancellation was requested, so the caller can stop before its next model call.
+        """
+        with self.db() as db:
+            query, params = ("UPDATE jobs SET stage=?, heartbeat_at=? WHERE job_id=? AND "
+                             "status='running'", [stage, now(), job_id])
+            if lease is not None:
+                query += " AND worker_id=?"
+                params.append(lease)
+            changed = db.execute(query, params).rowcount
+            if lease is not None and changed != 1:
+                raise StaleLease(f"Job {job_id} is not running under worker {lease}")
+            if changed:
+                _event(db, job_id, "stage", lease, {"stage": stage})
+            row = db.execute("SELECT cancel_requested FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+        return row["cancel_requested"] if row else None
+
+    def finish(self, job_id, status, result=None, error=None, stage=None, *, error_code=None,
+               lease=None):
         if status not in JOB_STATUSES:
             raise ValueError(f"Job status must be one of {', '.join(JOB_STATUSES)}")
         with self.db() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT status FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            row = db.execute("SELECT status, worker_id FROM jobs WHERE job_id=?", (job_id,)).fetchone()
             if row is None:
                 raise ValueError("Unknown job ID")
+            if lease is not None and row["worker_id"] != lease:
+                raise StaleLease(f"Job {job_id} is not owned by worker {lease}")
             if row["status"] in TERMINAL_STATUSES and row["status"] != status:
                 return
-            self._record_terminal(db, job_id, status, result, error, stage)
+            self._record_terminal(db, job_id, status, result, error, stage, error_code=error_code)
 
     @staticmethod
-    def _record_terminal(db, job_id, status, result, error, stage):
-        db.execute("UPDATE jobs SET status=?, stage=?, finished_at=?, result=?, error=? WHERE job_id=?",
-                   (status, stage, now(), json.dumps(result, ensure_ascii=False) if result else None,
-                    error, job_id))
+    def _record_terminal(db, job_id, status, result, error, stage, *, error_code=None):
+        finished = now()
+        db.execute("UPDATE jobs SET status=?, stage=?, finished_at=?, result=?, error=?, error_code=?, "
+                   "cancel_ack_at=CASE WHEN ?='cancelled' THEN COALESCE(cancel_ack_at, ?) "
+                   "ELSE cancel_ack_at END WHERE job_id=?",
+                   (status, stage, finished, json.dumps(result, ensure_ascii=False) if result else None,
+                    error, error_code, status, finished, job_id))
+        _event(db, job_id, "finished", detail={"status": status, "stage": stage, "error_code": error_code})
 
     def _record_success(self, db, job_id, result, stage="publish"):
         """The last write of a successful job; publish() calls it inside its own transaction."""
@@ -456,7 +877,7 @@ class LocalStore:
 
     def publish(self, paper, job_id, markdown, *, extraction_id, extraction_path,
                 extraction_status, model, validation_level, result, stem, metadata, summary,
-                previous_stem=None, document_sha256=None):
+                previous_stem=None, document_sha256=None, lease=None):
         """Stage a revision file, then atomically commit its pointer, index and job success.
 
         Files are immutable but outside SQLite's transaction; failed publication can leave an
@@ -473,7 +894,10 @@ class LocalStore:
         self.write_new(relative, body)
         with self.db() as db:
             db.execute("BEGIN IMMEDIATE")
-            job = db.execute("SELECT status,cancel_requested FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            job = db.execute("SELECT status,cancel_requested,worker_id FROM jobs WHERE job_id=?",
+                             (job_id,)).fetchone()
+            if job is not None and lease is not None and job["worker_id"] != lease:
+                raise StaleLease(f"Job {job_id} is not owned by worker {lease}")
             if job is None or job["status"] != "running" or job["cancel_requested"]:
                 raise ValueError("Job is no longer allowed to publish")
             # Both this document id and the paper's storage key: a workspace written before notes
@@ -484,19 +908,10 @@ class LocalStore:
                            "WHERE doc_type='note' AND doc_id=?)", (identity,))
                 db.execute("DELETE FROM section_map WHERE doc_type='note' AND doc_id=?", (identity,))
                 db.execute("DELETE FROM docs WHERE doc_type='note' AND doc_id=?", (identity,))
-            db.execute("INSERT OR REPLACE INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                       ("note", stem, metadata.get("title") or paper["title"], relative,
-                        metadata.get("year", ""), metadata.get("journal", ""),
-                        metadata.get("doi", ""), metadata.get("work_id") or "", "other",
-                        relative, summary))
-            matches = list(re.finditer(r"^## (.+)$", markdown, re.M))
-            for i, match in enumerate(matches):
-                end = matches[i + 1].start() if i + 1 < len(matches) else len(markdown)
-                cursor = db.execute("INSERT INTO sections(title,section,content) VALUES (?,?,?)",
-                                    (metadata.get("title") or paper["title"], match[1],
-                                     markdown[match.end():end]))
-                db.execute("INSERT INTO section_map VALUES (?,?,?,?)",
-                           (cursor.lastrowid, "note", stem, match[1]))
+            self._index_note(db, stem=stem, title=metadata.get("title") or paper["title"],
+                             relative=relative, markdown=markdown, year=metadata.get("year", ""),
+                             journal=metadata.get("journal", ""), doi=metadata.get("doi", ""),
+                             work_id=metadata.get("work_id") or "", summary=summary)
             db.execute("INSERT INTO note_versions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                        (revision_id, paper_id, job_id, relative, digest(body), extraction_id,
                         extraction_path, extraction_status, model, validation_level, now(),
@@ -508,6 +923,65 @@ class LocalStore:
             db.execute("UPDATE papers SET stem=? WHERE paper_id=?", (stem, paper_id))
             self._record_success(db, job_id, result | {"revision_id": revision_id})
         return {"path": relative, "revision_id": revision_id, "stem": stem}
+
+    @staticmethod
+    def _index_note(db, *, stem, title, relative, markdown, year, journal, doi, work_id, summary):
+        """The catalogue row and one search section per level-2 heading of an active note."""
+        db.execute("INSERT OR REPLACE INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                   ("note", stem, title, relative, year, journal, doi, work_id, "other",
+                    relative, summary))
+        matches = list(re.finditer(r"^## (.+)$", markdown, re.M))
+        for i, match in enumerate(matches):
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(markdown)
+            cursor = db.execute("INSERT INTO sections(title,section,content) VALUES (?,?,?)",
+                                (title, match[1], markdown[match.end():end]))
+            db.execute("INSERT INTO section_map VALUES (?,?,?,?)",
+                       (cursor.lastrowid, "note", stem, match[1]))
+
+    def reindex(self):
+        """Rebuild search from the active revisions' own files, in one transaction.
+
+        Only active notes are indexed: a retired revision must stay readable by the citations that
+        name it, but it must not answer searches. A note whose file no longer matches its recorded
+        hash is left out and reported, as search already refuses to return it.
+        """
+        from .evidence import note_summary, parse_frontmatter
+        indexed, problems = [], []
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT n.paper_id, v.revision_id, v.path, v.note_sha256, p.stem, p.title "
+                "FROM notes n JOIN note_versions v ON v.revision_id = n.revision_id "
+                "JOIN papers p ON p.paper_id = n.paper_id ORDER BY n.paper_id").fetchall()
+            db.execute("DELETE FROM sections WHERE rowid IN (SELECT rowid FROM section_map "
+                       "WHERE doc_type='note')")
+            db.execute("DELETE FROM section_map WHERE doc_type='note'")
+            db.execute("DELETE FROM docs WHERE doc_type='note'")
+            for row in rows:
+                try:
+                    body = self.path(row["path"]).read_bytes()
+                except OSError as exc:
+                    problems.append(f"{row['paper_id']}: {row['path']} unreadable ({type(exc).__name__})")
+                    continue
+                if digest(body) != row["note_sha256"]:
+                    problems.append(f"{row['paper_id']}: note hash mismatch {row['path']}")
+                    continue
+                if not row["stem"]:
+                    problems.append(f"{row['paper_id']}: active note has no document id")
+                    continue
+                markdown = body.decode("utf-8")
+                fields, _ = parse_frontmatter(markdown)
+
+                def text(key):
+                    value = fields.get(key, "")
+                    return "" if value is None else str(value)
+
+                self._index_note(db, stem=row["stem"], title=fields.get("title") or row["title"],
+                                 relative=row["path"], markdown=markdown, year=text("year"),
+                                 journal=text("journal"), doi=text("doi"),
+                                 work_id=text("work_ids"), summary=note_summary(markdown))
+                indexed.append(row["stem"])
+        return {"reindexed": len(indexed), "documents": indexed, "problems": problems}
 
     def search(self, query, limit=10):
         with self.db() as db:
@@ -572,7 +1046,10 @@ class LocalStore:
             prefix = f"runs/{job['job_id']}"
             execution = self.path(f"{prefix}/execution.json")
             terminal = self.path(f"{prefix}/receipt.json")
-            if not execution.exists() or job["status"] not in TERMINAL_STATUSES:
+            # Metadata and revalidation jobs call no model and leave no execution record; their
+            # terminal receipt is still owed.
+            if job["status"] not in TERMINAL_STATUSES or not (
+                    execution.exists() or job["kind"] in ("metadata", "revalidate")):
                 continue
             if terminal.exists():
                 try:
@@ -581,10 +1058,11 @@ class LocalStore:
                 except (ValueError, OSError):
                     conflicts.append(job["job_id"])
                 continue
-            record = {"job_id": job["job_id"], "paper_id": job["paper_id"],
+            record = {"job_id": job["job_id"], "kind": job["kind"], "paper_id": job["paper_id"],
                       "outcome": job["status"], "stage": job["stage"],
                       "finished_at": job["finished_at"], "error": job["error"],
-                      "reconciled_from_db": True, "execution_path": f"{prefix}/execution.json"}
+                      "error_code": job.get("error_code"), "reconciled_from_db": True,
+                      "execution_path": f"{prefix}/execution.json" if execution.exists() else None}
             try:
                 self.write_new(f"{prefix}/receipt.json", json.dumps(record, indent=2).encode())
                 recovered.append(job["job_id"])

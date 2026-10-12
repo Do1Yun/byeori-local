@@ -8,11 +8,12 @@ from pathlib import Path
 import sys
 import uuid
 
+from .backup import create_backup, restore_backup
 from .jobs import QuestionJobs
 from .llm import OllamaBackend
 from .metadata import OPENALEX_API, OpenAlexLookup
 from .service import GrobidExtractor, LocalService
-from .store import LocalStore
+from .store import SCHEMA_VERSION, LocalStore, migration_plan
 from .evidence import claim_fingerprint
 
 
@@ -26,15 +27,14 @@ def build_service(args=None, *, create=False):
         value = getattr(args, name, None)
         return value if value is not None else os.environ.get(env, fallback)
 
-    data_dir = setting("data_dir", "BYEORI_LOCAL_DATA")
-    if not data_dir:
-        raise ValueError("Set BYEORI_LOCAL_DATA or --data-dir to the workspace directory; "
-                         "run 'byeori-local init' to create one")
+    data_dir = workspace_dir(args)
     backend = OllamaBackend(setting("model", "BYEORI_LOCAL_MODEL", ""),
         setting("ollama_url", "BYEORI_OLLAMA_URL", "http://127.0.0.1:11434"),
         context=int(setting("context", "BYEORI_CONTEXT", "32768")),
         output=int(setting("output_tokens", "BYEORI_OUTPUT_TOKENS", "4096")),
+        timeout=float(setting("timeout", "BYEORI_OLLAMA_TIMEOUT", "600")),
         allow_remote=bool(getattr(args, "allow_remote_ollama", False)))
+    executor = os.environ.get("BYEORI_LOCAL_EXECUTOR", "inline").strip().lower()
     store = LocalStore(Path(data_dir), create=create)
     # Off by default is the wrong default here: a note with no year cannot be placed in the
     # sequence of work it belongs to, and the lookup never blocks a note when it cannot answer.
@@ -43,7 +43,35 @@ def build_service(args=None, *, create=False):
                             mailto=setting("openalex_mailto", "BYEORI_OPENALEX_MAILTO"),
                             api_key=os.environ.get("BYEORI_OPENALEX_API_KEY"))
     return LocalService(store, backend, GrobidExtractor(
-        os.environ.get("BYEORI_GROBID_URL", "http://127.0.0.1:8070")), lookup=lookup)
+        os.environ.get("BYEORI_GROBID_URL", "http://127.0.0.1:8070")), lookup=lookup,
+        executor=executor)
+
+
+def workspace_dir(args=None):
+    data_dir = getattr(args, "data_dir", None) or os.environ.get("BYEORI_LOCAL_DATA")
+    if not data_dir:
+        raise ValueError("Set BYEORI_LOCAL_DATA or --data-dir to the workspace directory; "
+                         "run 'byeori-local init' to create one")
+    return Path(data_dir)
+
+
+def storage_command(args):
+    """Commands that must not open the workspace the ordinary way, which would migrate it."""
+    match args.command:
+        case "backup":
+            return create_backup(workspace_dir(args), args.destination, include_inbox=args.include_inbox)
+        case "restore":
+            return restore_backup(args.backup_dir, args.destination,
+                                  allow_migration=not args.no_migration)
+        case "migrate":
+            if args.plan:
+                return migration_plan(workspace_dir(args))
+            path = workspace_dir(args).expanduser().resolve()
+            before = migration_plan(path)
+            store = LocalStore(path, create=False, migrate=True)
+            return {"workspace": str(path), "from": before["current"], "to": store.schema_version(),
+                    "migrated": store.migrated_from is not None,
+                    "journal_mode": store.journal_mode()}
 
 
 VERDICTS = "맞음 / 인용틀림 / 수치틀림 / 근거없음 / 무인용"
@@ -132,6 +160,8 @@ def main(argv=None):
     parser.add_argument("--allow-remote-ollama", action="store_true", help="Explicitly permit an external Ollama endpoint; cloud models remain refused")
     parser.add_argument("--context", type=int)
     parser.add_argument("--output-tokens", type=int)
+    parser.add_argument("--timeout", type=float,
+                        help="Seconds one model call may take, or BYEORI_OLLAMA_TIMEOUT (default 600)")
     parser.add_argument("--openalex-mailto", help="Identifies you to OpenAlex, or BYEORI_OPENALEX_MAILTO")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init", help="Create the workspace named by --data-dir or BYEORI_LOCAL_DATA")
@@ -151,9 +181,33 @@ def main(argv=None):
     again = sub.add_parser("revalidate", help="Publish a note a failed job already wrote")
     again.add_argument("job_id", nargs="?")
     again.add_argument("--all", action="store_true")
+    again.add_argument("--submit", action="store_true", help="Queue it for the worker instead")
     meta = sub.add_parser("metadata", help="Settle a published paper's year, journal and work ID")
     meta.add_argument("paper_id", nargs="?")
     meta.add_argument("--all", action="store_true")
+    meta.add_argument("--submit", action="store_true", help="Queue it for the worker instead")
+    worker = sub.add_parser("worker", help="Run queued jobs until stopped (SIGTERM/Ctrl+C stops "
+                                           "at the next safe point)")
+    worker.add_argument("--once", action="store_true", help="Exit when nothing can be claimed")
+    worker.add_argument("--max-jobs", type=int)
+    worker.add_argument("--poll-seconds", type=float, default=2.0)
+    worker.add_argument("--no-resume-interrupted", action="store_true",
+                        help="Do not queue again the jobs an earlier worker left running")
+    worker.add_argument("--log-dir", type=Path)
+    marks = sub.add_parser("checkpoints", help="Stored stages a resumed job can read for a paper")
+    marks.add_argument("paper_id")
+    backup = sub.add_parser("backup", help="Copy the workspace into a new directory and verify it")
+    backup.add_argument("destination", type=Path)
+    backup.add_argument("--include-inbox", action="store_true")
+    restore = sub.add_parser("restore", help="Restore a backup into a directory that does not exist yet")
+    restore.add_argument("backup_dir", type=Path)
+    restore.add_argument("destination", type=Path)
+    restore.add_argument("--no-migration", action="store_true")
+    sub.add_parser("reindex", help="Rebuild search from the active notes' files")
+    migrate = sub.add_parser("migrate", help=f"Show or apply the move to schema {SCHEMA_VERSION}")
+    choice = migrate.add_mutually_exclusive_group(required=True)
+    choice.add_argument("--plan", action="store_true", help="Show what would change; change nothing")
+    choice.add_argument("--apply", action="store_true")
     add = sub.add_parser("add", help="Register a PDF, or every PDF in a folder")
     add.add_argument("path", type=Path, help="A PDF file or a folder of them")
     add.add_argument("--title", help="Only when registering a single file")
@@ -163,6 +217,9 @@ def main(argv=None):
     process.add_argument("paper_id", nargs="?")
     process.add_argument("--all", action="store_true",
                          help="Every registered paper that has no note yet")
+    process.add_argument("--submit", action="store_true", help="Queue it for the worker instead")
+    process.add_argument("--no-resume", action="store_true",
+                         help="Ignore stored checkpoints and start the paper over")
     listing = sub.add_parser("list")
     listing.add_argument("--limit", type=int, default=50)
     listing.add_argument("--cursor")
@@ -177,6 +234,8 @@ def main(argv=None):
     ask = sub.add_parser("ask")
     ask.add_argument("question")
     ask.add_argument("--paper")
+    ask.add_argument("--submit", action="store_true",
+                     help="Queue it for the worker and print the job ID instead of waiting")
     cancel = sub.add_parser("cancel")
     cancel.add_argument("job_id")
     status = sub.add_parser("status")
@@ -185,6 +244,14 @@ def main(argv=None):
     status.add_argument("--cursor")
     args = parser.parse_args(argv)
     try:
+        if args.command in {"backup", "restore", "migrate"}:
+            result = storage_command(args)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            if args.command == "backup" and (result["referenced_missing"] or not result["verified"]):
+                return 3
+            if args.command == "restore" and result["status"] != "restored":
+                return 1
+            return 0
         service = build_service(args, create=args.command == "init")
         match args.command:
             case "init":
@@ -192,6 +259,12 @@ def main(argv=None):
             case "doctor":
                 result = service.backend.doctor()
                 result["data_dir"] = str(service.store.root)
+                result["schema"] = {"version": service.store.schema_version(), "code": SCHEMA_VERSION}
+                result["journal_mode"] = service.store.journal_mode()
+                result["executor"] = service.executor
+                result["worker"] = service.store.worker_status()
+                probe = getattr(service.extractor, "ready", None)
+                result["extractor"] = probe() if callable(probe) else None
                 result["integrity_problems"] = service.store.integrity_problems()
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0 if (result["model_available"] and result["model_locality"] == "local"
@@ -225,11 +298,32 @@ def main(argv=None):
             case "revalidate":
                 if args.all == bool(args.job_id):
                     raise ValueError("Give a job ID or --all, not both")
-                result = service.revalidate_all() if args.all else service.revalidate(args.job_id)
+                if args.submit:
+                    result = with_worker(service, service.submit_revalidate(args.job_id))
+                else:
+                    result = service.revalidate_all() if args.all else service.revalidate(args.job_id)
             case "metadata":
                 if args.all == bool(args.paper_id):
                     raise ValueError("Give a paper ID or --all, not both")
-                result = service.refresh_all() if args.all else service.refresh_metadata(args.paper_id)
+                if args.submit:
+                    result = with_worker(service, service.submit_metadata(args.paper_id))
+                else:
+                    result = service.refresh_all() if args.all else service.refresh_metadata(args.paper_id)
+            case "worker":
+                from .worker import Worker
+                result = Worker(service, once=args.once, max_jobs=args.max_jobs,
+                                poll_seconds=args.poll_seconds,
+                                resume_interrupted=not args.no_resume_interrupted,
+                                log_dir=args.log_dir, install_signals=True).run()
+            case "checkpoints":
+                service.store.paper(args.paper_id)
+                result = {"paper_id": args.paper_id, "checkpoints": [
+                    {"checkpoint_id": item["checkpoint_id"], "stage": item["stage"],
+                     "created_at": item["created_at"], "job_id": item["job_id"],
+                     "files": [file["path"] for file in item["files"]], "meta": item["meta"]}
+                    for item in service.checkpoints.for_paper(args.paper_id)]}
+            case "reindex":
+                result = service.store.reindex()
             case "add": result = service.intake(args.path, args.title)
             case "intake":
                 folder = service.inbox()
@@ -240,20 +334,33 @@ def main(argv=None):
             case "process":
                 if args.all == bool(args.paper_id):
                     raise ValueError("Give a paper ID or --all, not both")
-                result = service.process_all() if args.all else service.process(args.paper_id)
+                resume = not args.no_resume
+                if args.submit:
+                    result = with_worker(service, service.submit_all_notes(resume=resume) if args.all
+                                         else service.submit_note(args.paper_id, resume=resume))
+                else:
+                    result = (service.process_all(resume=resume) if args.all
+                              else service.process(args.paper_id, resume=resume))
             case "list": result = service.store.paper_page(limit=args.limit, cursor=args.cursor)
             case "search": result = service.store.search(args.query)
             case "read": result = service.read(args.paper_id, start=args.start, revision=args.revision)
             case "revisions": result = service.store.revisions(args.paper_id)
             case "ask":
-                # A question is a recorded job here too, and this foreground process runs it:
-                # submitting without waiting belongs to the MCP server, which outlives the call.
-                jobs = QuestionJobs(service)
-                job = jobs.wait(jobs.submit(args.question, args.paper)["job_id"])
-                result = job["result"] if job["status"] == "succeeded" else job
+                if args.submit:
+                    result = QuestionJobs(service, executor="worker").submit(args.question, args.paper)
+                else:
+                    # A question is a recorded job here too, and this foreground process runs it.
+                    jobs = QuestionJobs(service, executor="inline")
+                    job = jobs.wait(jobs.submit(args.question, args.paper)["job_id"])
+                    result = job["result"] if job["status"] == "succeeded" else job
             case "cancel": result = QuestionJobs(service).cancel(args.job_id)
-            case "status": result = ([service.store.job(args.job_id)] if args.job_id else
-                                     service.store.job_page(limit=args.limit, cursor=args.cursor))
+            case "status":
+                if args.job_id:
+                    result = [service.store.job(args.job_id) | {
+                        "events": service.store.events(args.job_id, 20),
+                        "worker": service.store.worker_status()}]
+                else:
+                    result = service.store.job_page(limit=args.limit, cursor=args.cursor)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if isinstance(result, dict):
             if result.get("status") in {"failed", "interrupted"}:
@@ -269,9 +376,21 @@ def main(argv=None):
         code = getattr(exc, "error_code", "invalid_argument" if isinstance(exc, ValueError) else "runtime_error")
         if isinstance(exc, ValueError) and str(exc).startswith("Unknown"):
             code = "not_found"
-        print(json.dumps({"error": str(exc), "error_code": code,
-                          "retryable": getattr(exc, "retryable", False)}, ensure_ascii=False), file=sys.stderr)
+        failure = {"error": str(exc), "error_code": code, "retryable": getattr(exc, "retryable", False)}
+        if getattr(exc, "details", None):
+            failure["details"] = exc.details
+        print(json.dumps(failure, ensure_ascii=False), file=sys.stderr)
         return 2 if code == "invalid_argument" else 1
+
+
+def with_worker(service, submitted):
+    """A submission says whether anything will run it."""
+    worker = service.store.worker_status()
+    submitted = submitted | {"executor": "worker", "worker_alive": worker["alive"]}
+    if not worker["alive"]:
+        submitted["diagnostic"] = ("worker_unavailable: start 'byeori-local worker' to run "
+                                   "queued jobs")
+    return submitted
 
 
 if __name__ == "__main__":

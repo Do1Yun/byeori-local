@@ -24,7 +24,7 @@ import httpx
 
 from byeori.local.cli import main as cli_main, recorded_verdicts, review_markdown
 from byeori.local.jobs import QuestionJobs
-from byeori.local.llm import Generation, ModelError, OllamaBackend
+from byeori.local.llm import Generation, ModelError, OllamaBackend, OutputTruncated
 from byeori.local.service import LocalService, parse_frontmatter
 from byeori.local.store import LocalStore, digest
 
@@ -114,7 +114,8 @@ with tempfile.TemporaryDirectory(prefix='byeori-review-') as directory:
             shown = re.findall(r'\[(P\d+)\]', prompt)
             if system.startswith('Digest one part'):
                 if 'P0007' in shown:
-                    raise ModelError('Model did not finish normally; incomplete output was not published')
+                    # Since phase B only the output limit splits a part; it is its own error.
+                    raise OutputTruncated('Model did not finish normally; incomplete output was not published')
                 return Generation('- a reported value ' + ' '.join(f'[{i}]' for i in shown),
                                   self.model, 100, 50, 'stop')
             return Generation(fixtures.note_text('P0007'), self.model, 100, 200, 'stop')

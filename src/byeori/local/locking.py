@@ -12,6 +12,10 @@ _locks = {}
 _depth = threading.local()
 
 
+class WorkerBusy(RuntimeError):
+    error_code = "worker_busy"
+
+
 @contextmanager
 def serial_lock(path):
     """A blocking, thread- and process-safe lock, reentrant only for this thread."""
@@ -54,6 +58,54 @@ def serial_lock(path):
                     fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
+@contextmanager
+def try_lock(path):
+    """Take serial_lock's lock only if nobody holds it; yields whether it was taken.
+
+    A held lock is a different fact from a free one: a marker left beside a free endpoint lock
+    belongs to a process that is gone, while one beside a held lock belongs to a call in flight.
+    """
+    path = Path(path).resolve()
+    with _registry_guard:
+        lock = _locks.setdefault(str(path), threading.RLock())
+    if not lock.acquire(blocking=False):
+        yield False
+        return
+    try:
+        held = getattr(_depth, "held", set())
+        if str(path) in held:
+            yield True
+            return
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with path.open("a+b") as stream:
+            if path.stat().st_size == 0:
+                stream.write(b"0")
+                stream.flush()
+            stream.seek(0)
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                yield False
+                return
+            _depth.held = held | {str(path)}
+            try:
+                yield True
+            finally:
+                _depth.held = held
+                stream.seek(0)
+                if os.name == "nt":
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+    finally:
+        lock.release()
+
+
 def runtime_path(url="http://127.0.0.1:11434"):
     parsed = urlparse(url)
     host = parsed.hostname or "127.0.0.1"
@@ -88,7 +140,7 @@ def worker_lock(root):
                 import fcntl
                 fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
-            raise RuntimeError("Another worker is processing this workspace; retry when it finishes") from exc
+            raise WorkerBusy("Another worker is processing this workspace; retry when it finishes") from exc
         try:
             yield
         finally:

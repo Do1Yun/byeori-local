@@ -10,7 +10,7 @@ import re
 
 import pytest
 
-from byeori.local.llm import Generation, ModelError
+from byeori.local.llm import Generation, ModelError, OutputTruncated
 from byeori.local.service import HEADINGS, LocalService, extraction_status, parse_tei
 from byeori.local.store import LocalStore
 from local_helpers import ollama_transport
@@ -1025,8 +1025,8 @@ def test_a_part_whose_digest_is_cut_off_is_halved_and_retried(workspace):
             shown = re.findall(r"\[(P\d+)\]", prompt)
             if system.startswith("Digest one part"):
                 if len(shown) > self.limit:
-                    raise ModelError("Model did not finish normally; incomplete output "
-                                     "was not published")
+                    raise OutputTruncated("Model did not finish normally; incomplete output "
+                                          "was not published")
                 return Generation("- a reported value " + " ".join(f"[{i}]" for i in shown),
                                   self.model, 100, 50, "stop")
             return Generation(note_text(shown[0]), self.model, 100, 200, "stop")
@@ -1048,7 +1048,7 @@ def test_splitting_stops_rather_than_going_on_for_ever(workspace):
         def generate(self, system, prompt, *, think=None):
             self.systems.append(system)
             if system.startswith("Digest one part"):
-                raise ModelError("Model did not finish normally; incomplete output was not published")
+                raise OutputTruncated("Model did not finish normally; incomplete output was not published")
             return Generation(note_text(), self.model, 100, 200, "stop")
 
     service = LocalService(store, NeverFinishes(), Extractor(long_tei(20)))
@@ -1069,8 +1069,8 @@ def test_one_failed_block_is_recorded_without_publishing_incomplete_evidence(wor
             shown = re.findall(r"\[(P\d+)\]", prompt)
             if system.startswith("Digest one part"):
                 if "P0007" in shown:
-                    raise ModelError("Model did not finish normally; incomplete output "
-                                     "was not published")
+                    raise OutputTruncated("Model did not finish normally; incomplete output "
+                                          "was not published")
                 return Generation("- a reported value " + " ".join(f"[{i}]" for i in shown),
                                   self.model, 100, 50, "stop")
             return Generation(note_text(shown[0]), self.model, 100, 200, "stop")
@@ -1093,7 +1093,7 @@ def test_a_paper_too_much_of_which_cannot_be_digested_is_not_published(workspace
             self.systems.append(system)
             shown = re.findall(r"\[(P\d+)\]", prompt)
             if system.startswith("Digest one part"):
-                raise ModelError("Model did not finish normally; incomplete output was not published")
+                raise OutputTruncated("Model did not finish normally; incomplete output was not published")
             return Generation(note_text(shown[0] if shown else "P0001"), self.model, 100, 200, "stop")
 
     service = LocalService(store, ChokesOnMany(), Extractor(long_tei(20)))
