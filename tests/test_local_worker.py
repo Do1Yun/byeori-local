@@ -39,6 +39,7 @@ def local(tmp_path):
 
 
 def worker(service, **options):
+    options.setdefault("prevent_sleep", False)
     return Worker(service, once=True, log_stream=None, poll_seconds=0.01, **options)
 
 
@@ -336,3 +337,36 @@ def test_mcp_ask_enqueues_for_worker_when_configured(local):
         assert "enqueued" in str(job)
     asyncio.run(check())
     assert service.store.job(submitted["job_id"])["status"] == "queued"
+
+
+def test_the_mac_is_held_awake_only_while_a_job_runs(local, monkeypatch):
+    import byeori.local.worker as module
+    service, pid = local
+    launched = []
+
+    class Caffeinate:
+        def __init__(self, command, **kwargs):
+            launched.append(command)
+            self.ended = False
+
+        def poll(self):
+            return 0 if self.ended else None
+
+        def terminate(self):
+            self.ended = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(module.shutil, "which", lambda name: "/usr/bin/caffeinate")
+    monkeypatch.setattr(module.SleepGuard, "spawn", staticmethod(Caffeinate))
+    service.submit_note(pid)
+    summary = worker(service, prevent_sleep=True).run()
+    assert launched == [["/usr/bin/caffeinate", "-i", "-w", str(os.getpid())]], "one hold per job"
+    finished = [json.loads(line) for line in open(summary["log"], encoding="utf-8")
+                if '"finished"' in line]
+    assert finished[0]["detail"]["sleep_prevented"] is True
+    launched.clear()
+    worker(service, prevent_sleep=True).run()
+    assert launched == [], "an idle worker lets the machine sleep"

@@ -691,7 +691,7 @@ class LocalService:
             return ended | {"status": "cancelled"}
         if isinstance(exc, JobInterrupted):
             record["outcome"] = "interrupted"
-            follower = self.store.interrupt(job_id, lease=run.lease)
+            follower = self.store.interrupt(job_id, lease=run.lease, reason=str(exc))
             record["requeued_as"] = follower
             self._save_receipt(prefix, record)
             return ended | {"status": "interrupted", "requeued_as": follower}
@@ -1119,8 +1119,7 @@ class LocalService:
             run = Run(run)
         record["stage"] = stage
         if interruptible and run.stop is not None and run.stop.is_set():
-            raise JobInterrupted(f"The worker stopped before {stage}; the job continues from "
-                                 "its checkpoints")
+            raise JobInterrupted(f"The worker stopped before {stage}")
         if self.store.set_stage(run.job_id, stage, lease=run.lease) is not None:
             raise JobCancelled(f"Cancelled before {stage}")
 

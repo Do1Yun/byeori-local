@@ -194,6 +194,8 @@ def main(argv=None):
     worker.add_argument("--no-resume-interrupted", action="store_true",
                         help="Do not queue again the jobs an earlier worker left running")
     worker.add_argument("--log-dir", type=Path)
+    worker.add_argument("--allow-sleep", action="store_true",
+                        help="Do not hold macOS awake while a job runs (it is by default)")
     marks = sub.add_parser("checkpoints", help="Stored stages a resumed job can read for a paper")
     marks.add_argument("paper_id")
     backup = sub.add_parser("backup", help="Copy the workspace into a new directory and verify it")
@@ -314,7 +316,8 @@ def main(argv=None):
                 result = Worker(service, once=args.once, max_jobs=args.max_jobs,
                                 poll_seconds=args.poll_seconds,
                                 resume_interrupted=not args.no_resume_interrupted,
-                                log_dir=args.log_dir, install_signals=True).run()
+                                log_dir=args.log_dir, install_signals=True,
+                                prevent_sleep=not args.allow_sleep).run()
             case "checkpoints":
                 service.store.paper(args.paper_id)
                 result = {"paper_id": args.paper_id, "checkpoints": [

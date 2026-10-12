@@ -12,8 +12,10 @@ from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -77,16 +79,55 @@ class Heartbeat:
         self._thread.join(timeout=5)
 
 
+class SleepGuard:
+    """Keeps an unattended Mac from idle-sleeping while a job runs.
+
+    Measured on this machine: macOS entered maintenance sleep for 99 seconds in the middle of a
+    digest, and the model's work paused with it. caffeinate -i holds the same assertion a person
+    holding the machine awake would, and -w ends it if this process dies without cleaning up.
+    """
+
+    spawn = staticmethod(subprocess.Popen)
+
+    def __init__(self, enabled=True):
+        self.command = (shutil.which("caffeinate")
+                        if enabled and sys.platform == "darwin" else None)
+        self.process = None
+
+    def __enter__(self):
+        if self.command:
+            try:
+                self.process = self.spawn([self.command, "-i", "-w", str(os.getpid())],
+                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError:
+                self.process = None
+        return self
+
+    @property
+    def active(self):
+        return self.process is not None and self.process.poll() is None
+
+    def __exit__(self, *exc):
+        if self.process is not None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+            self.process = None
+
+
 class Worker:
     def __init__(self, service, *, once=False, max_jobs=None, resume_interrupted=True,
                  poll_seconds=2.0, heartbeat_seconds=15.0, extractor_wait=30.0,
-                 recovery_wait=30.0, log_dir=None, log_stream=sys.stderr, install_signals=False):
+                 recovery_wait=30.0, log_dir=None, log_stream=sys.stderr, install_signals=False,
+                 prevent_sleep=True):
         self.service, self.store = service, service.store
         self.worker_id = uuid.uuid4().hex
         self.once, self.max_jobs, self.resume_interrupted = once, max_jobs, resume_interrupted
         self.poll_seconds, self.heartbeat_seconds = poll_seconds, heartbeat_seconds
         self.extractor_wait, self.recovery_wait = extractor_wait, recovery_wait
-        self.install_signals = install_signals
+        self.install_signals, self.prevent_sleep = install_signals, prevent_sleep
         self.stop_event = threading.Event()
         self.log = WorkerLog(log_dir or self.store.root / "logs", self.worker_id, log_stream)
         self.state, self._last_beat = None, 0.0
@@ -192,9 +233,13 @@ class Worker:
         run = Run(job_id, lease=self.worker_id, stop=self.stop_event)
         beat = Heartbeat(self.store, job_id, self.worker_id, self.heartbeat_seconds)
         beat.start()
-        started, outcome = time.monotonic(), None
+        # Wall-clock time: macOS's monotonic clock stops while the machine sleeps, which made a
+        # 248-second job read as 151 seconds.
+        started, outcome, awake = time.time(), None, False
         try:
-            outcome = self._dispatch(job, run)
+            with SleepGuard(self.prevent_sleep) as guard:
+                awake = guard.active
+                outcome = self._dispatch(job, run)
         except StaleLease as exc:
             self.log.write("stale_lease", level="error", job_id=job_id, detail={"error": str(exc)[:200]})
         except Exception as exc:                          # noqa: BLE001 - one job never ends the worker
@@ -211,7 +256,8 @@ class Worker:
         self.jobs_run += 1
         self.counts[final["status"]] = self.counts.get(final["status"], 0) + 1
         detail = {"status": final["status"], "stage": final.get("stage"),
-                  "error_code": final.get("error_code"), "seconds": round(time.monotonic() - started, 1)}
+                  "error_code": final.get("error_code"), "seconds": round(time.time() - started, 1),
+                  "sleep_prevented": awake}
         if follower:
             detail["requeued_as"] = follower
         if isinstance(outcome, dict) and outcome.get("checkpoints_reused") is not None:

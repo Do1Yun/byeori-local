@@ -658,7 +658,7 @@ class LocalStore:
                        "stopped_at=COALESCE(stopped_at, ?) WHERE state != 'stopped'", (ended,))
         return running
 
-    def interrupt(self, job_id, *, lease=None, requeue=True, error=None):
+    def interrupt(self, job_id, *, lease=None, requeue=True, reason=None):
         """A job its worker stopped at a safe point; returns the job that continues it, if any."""
         with self.db() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -669,17 +669,17 @@ class LocalStore:
                 raise StaleLease(f"Job {job_id} is not owned by worker {lease}")
             if row["status"] != "running":
                 return None
-            return self._interrupt(db, row, requeue=requeue, error=error)
+            return self._interrupt(db, row, requeue=requeue, reason=reason)
 
-    def _interrupt(self, db, row, *, requeue, error=None):
+    def _interrupt(self, db, row, *, requeue, reason=None):
         worker = row["executor"] == "worker"
         eligible = worker and requeue and row["cancel_requested"] is None
         again = eligible and (row["attempt"] or 1) < (row["max_attempts"] or 3)
         code = "max_attempts_exhausted" if eligible and not again else "worker_interrupted"
-        if error is None:
-            error = (INLINE_INTERRUPTED if not worker else
-                     "The worker stopped before this job finished; "
-                     + ("it was queued again" if again else "it was not queued again"))
+        error = (INLINE_INTERRUPTED if not worker else
+                 (reason or "The worker stopped before this job finished") + "; "
+                 + ("queued again to resume from its checkpoints" if again
+                    else "not queued again"))
         stopped = now()
         db.execute("UPDATE jobs SET status='interrupted', finished_at=?, error=?, error_code=?, "
                    "cancel_ack_at=CASE WHEN cancel_requested IS NOT NULL "
