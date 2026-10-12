@@ -13,6 +13,7 @@ import pytest
 from byeori.local.llm import Generation, ModelError
 from byeori.local.service import HEADINGS, LocalService, extraction_status, parse_tei
 from byeori.local.store import LocalStore
+from local_helpers import ollama_transport
 
 TEI = b"""<TEI xmlns="http://www.tei-c.org/ns/1.0">
 <teiHeader><encodingDesc><appInfo><application version="0.9.1" ident="GROBID"/></appInfo></encodingDesc>
@@ -378,7 +379,7 @@ def test_a_prompt_the_server_may_have_truncated_is_not_published():
     served = httpx.Response(200, json={"done": True, "done_reason": "stop", "model": "test-model",
                                        "message": {"content": "## One-line Summary"},
                                        "prompt_eval_count": 500, "eval_count": 20})
-    backend = OllamaBackend("test-model", transport=httpx.MockTransport(lambda request: served))
+    backend = OllamaBackend("test-model", transport=ollama_transport(lambda request: served, "test-model"))
     with pytest.raises(ModelError, match="may have been truncated"):
         backend.generate("system", "word " * 4000)
 
@@ -560,13 +561,15 @@ def test_a_workspace_from_an_earlier_schema_keeps_its_notes(local):
 
 
 def test_processing_a_paper_does_not_interrupt_a_running_question(answered):
+    from concurrent.futures import ThreadPoolExecutor
     service, jobs, paper_id = answered
     job_id = jobs.submit("How good is it?", paper_id)["job_id"]
     assert service.backend.started.wait(5)
-    service.process(paper_id)
-    assert jobs.store.job(job_id)["status"] == "running", \
-        "the note worker must not mark another kind of job interrupted"
-    service.backend.release.set()
+    with ThreadPoolExecutor() as executor:
+        processing = executor.submit(service.process, paper_id)
+        assert jobs.store.job(job_id)["status"] == "running"
+        service.backend.release.set()
+        assert processing.result(timeout=5)["status"] == "succeeded"
     assert jobs.wait(job_id, timeout=5)["status"] == "succeeded"
 
 
@@ -735,6 +738,7 @@ def test_a_note_indexed_under_an_earlier_identity_stops_answering_searches(heade
 def test_an_answer_that_names_paragraphs_keeps_every_note_it_read(local):
     """qwen3:8b answered from three notes as [E1-P0040], [E2-P0056], [E3]; only E3 was recorded."""
     service, paper_id, _ = local
+    service.backend.answer = note_text().replace("[P0001]", "[P0001][P0002]")
     service.process(paper_id)
     service.backend.answer = ("Bahdanau reports 34.16 [E1-P0001]. The Transformer reports 28.4 "
                               "[E1-P0001, P0002]. BERT is not a translation model [E1].")
@@ -1055,8 +1059,8 @@ def test_splitting_stops_rather_than_going_on_for_ever(workspace):
     assert attempts <= 2 * MAX_PART_SPLITS + 4, f"{attempts} attempts is not a bounded retry"
 
 
-def test_one_block_the_model_cannot_digest_does_not_cost_the_paper(workspace):
-    """On scGPT this block was a figure's axis labels flattened into a paragraph."""
+def test_one_failed_block_is_recorded_without_publishing_incomplete_evidence(workspace):
+    """A block's small size is not evidence that losing it is safe."""
     store, paper_id, _ = workspace
 
     class ChokesOnOneBlock(PartsModel):
@@ -1072,11 +1076,13 @@ def test_one_block_the_model_cannot_digest_does_not_cost_the_paper(workspace):
             return Generation(note_text(shown[0]), self.model, 100, 200, "stop")
 
     service = LocalService(store, ChokesOnOneBlock(), Extractor(long_tei(20)))
-    coverage = service.process(paper_id)["coverage"]
+    with pytest.raises(RuntimeError, match="too much of this paper is missing"):
+        service.process(paper_id)
+    job = store.jobs()[0]
+    coverage = json.loads(store.path(f"runs/{job['job_id']}/receipt.json").read_text())["coverage"]
     assert coverage["blocks_skipped"] == ["P0007"]
-    assert coverage["blocks_presented"] == 19 and coverage["blocks_total"] == 20
-    assert 'blocks_presented: "19/20"' in store.note(paper_id)["text"], \
-        "the note says how much of the paper it was written from"
+    assert coverage["coverage_status"] == "incomplete"
+    assert not store.papers_with_notes()
 
 
 def test_a_paper_too_much_of_which_cannot_be_digested_is_not_published(workspace):
@@ -1123,7 +1129,7 @@ def test_a_range_too_wide_to_mean_anything_is_left_alone():
 
 # --- publishing a note a failed job already wrote -------------------------------------------
 
-def test_a_note_that_only_failed_its_check_is_published_without_the_model(workspace):
+def test_a_note_that_only_failed_its_check_is_published_without_the_model(workspace, monkeypatch):
     """scGPT was written in 70 minutes and failed the last step twice over its citation format."""
     store, paper_id, _ = workspace
     service = LocalService(store, Model(), Extractor(HEADED_TEI))
@@ -1133,8 +1139,9 @@ def test_a_note_that_only_failed_its_check_is_published_without_the_model(worksp
     failed = store.jobs()[0]["job_id"]
 
     # What a checker that has since learned the format would make of the same candidate.
-    candidate = store.path(f"runs/{failed}/candidate.md")
-    candidate.write_text(note_text(), encoding="utf-8")
+    from byeori.local import service as module
+    normalize = module.normalize_note
+    monkeypatch.setattr(module, "normalize_note", lambda text: normalize(text.replace("[P0001 & P0002]", "[P0001]")))
     before = service.backend.calls
 
     published = service.revalidate(failed)
@@ -1191,7 +1198,7 @@ def test_a_review_sheet_pairs_every_claim_with_the_text_it_cites(headed):
     assert sheet["claims"], "a note with claims produces claims to judge"
     for claim in sheet["claims"]:
         assert "[P" not in claim["claim"], "the citation is shown beside the claim, not inside it"
-        assert not claim["claim"].startswith(("-", "*")), "the list marker is not part of the claim"
+        assert not claim["claim"].startswith(("- ", "* ")), "the list marker is not part of the claim"
         for source in claim["sources"]:
             assert source["id"] in claim["cited"]
             assert source["text"], "a claim is judged against the paragraph, not against its id"
@@ -1300,7 +1307,9 @@ def test_a_verdict_survives_the_sheet_being_rebuilt(tmp_path, monkeypatch):
     path.write_text(filled, encoding="utf-8")
 
     kept = recorded_verdicts(path)
-    assert kept == {"It reports 28.4 BLEU": {"판정": "맞음", "메모": "checked by hand", "판정자": "사람"}}
+    from byeori.local.evidence import claim_fingerprint
+    assert kept == {claim_fingerprint(sheet["paper_id"], sheet["claims"][0]):
+                    {"판정": "맞음", "메모": "checked by hand", "판정자": "사람"}}
     rebuilt = review_markdown(sheet, kept)
     assert "- 판정: 맞음" in rebuilt and "- 판정자: 사람" in rebuilt
 

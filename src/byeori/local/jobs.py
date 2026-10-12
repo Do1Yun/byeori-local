@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import threading
 import time
+import uuid
+
+from .locking import serial_lock
 
 WAIT_INTERVAL = 0.1
 
@@ -20,6 +23,7 @@ class QuestionJobs:
         self.store = service.store
         self._lock = threading.Lock()
         self._worker = None
+        self.owner_token = uuid.uuid4().hex
         self.recover()
 
     def recover(self):
@@ -31,8 +35,9 @@ class QuestionJobs:
             raise ValueError("Question must contain 1 to 4000 characters")
         if paper_id is not None:
             self.store.paper(paper_id)        # fail now, not inside the worker
-        job_id = self.store.start_question(question, paper_id)
-        self._ensure_worker()
+        with self._lock:
+            job_id = self.store.start_question(question, paper_id, owner_token=self.owner_token)
+            self._start_worker()
         return {"job_id": job_id, "status": "queued", "poll_with": "get_job"}
 
     def cancel(self, job_id):
@@ -54,29 +59,39 @@ class QuestionJobs:
 
     def _ensure_worker(self):
         with self._lock:
-            if self._worker is None or not self._worker.is_alive():
-                self._worker = threading.Thread(target=self._run, name="byeori-questions",
-                                                daemon=True)
-                self._worker.start()
+            self._start_worker()
+
+    def _start_worker(self):
+        if self._worker is None or not self._worker.is_alive():
+            self._worker = threading.Thread(target=self._run, name="byeori-questions", daemon=True)
+            self._worker.start()
 
     def _run(self):
         while True:
-            job = self.store.claim_question()
-            if job is None:
-                return
-            job_id, request = job["job_id"], job["request"]
-            if job["cancel_requested"] is not None:
-                self.store.finish(job_id, "cancelled", stage="queued",
-                                  error="Cancelled before the model was called")
-                continue
-            try:
-                answer = self.service.ask(request["question"], request.get("paper_id"))
-            except Exception as exc:                       # a question must not end the worker
-                self.store.finish(job_id, "failed", stage="answer", error=str(exc))
-                continue
-            if self.store.job(job_id)["cancel_requested"] is not None:
-                self.store.finish(job_id, "cancelled", stage="answer",
-                                  error="Cancelled while the model was answering; the answer "
-                                        "it returned was discarded")
-            else:
-                self.store.finish(job_id, "succeeded", result=answer, stage="answer")
+            with serial_lock(self.store.root / ".questions.lock"):
+                with self._lock:
+                    job = self.store.claim_question(self.owner_token)
+                    if job is None:
+                        # A submit observes this decision under the same lock and starts a
+                        # successor even while this thread has not physically returned yet.
+                        self._worker = None
+                        return
+                self._answer(job)
+
+    def _answer(self, job):
+        job_id, request = job["job_id"], job["request"]
+        if job["cancel_requested"] is not None:
+            self.store.finish(job_id, "cancelled", stage="queued",
+                              error="Cancelled before the model was called")
+            return
+        try:
+            answer = self.service.ask(request["question"], request.get("paper_id"))
+        except Exception as exc:                       # a question must not end the worker
+            self.store.finish(job_id, "failed", stage="answer", error=str(exc))
+            return
+        if self.store.job(job_id)["cancel_requested"] is not None:
+            self.store.finish(job_id, "cancelled", stage="answer",
+                              error="Cancelled while the model was answering; the answer "
+                                    "it returned was discarded")
+        else:
+            self.store.finish(job_id, "succeeded", result=answer, stage="answer")

@@ -27,6 +27,11 @@ def create_server(service=None):
         return current().store.papers()
 
     @mcp.tool()
+    def list_papers_page(limit: int = 50, cursor: str | None = None) -> dict:
+        """Page through all papers. Pass next_cursor back; legacy list_papers shows only the first 100."""
+        return current().store.paper_page(limit=limit, cursor=cursor)
+
+    @mcp.tool()
     def search_wiki(query: str, limit: int = 10) -> list[dict]:
         """Search published Evidence Notes with BM25; use English scientific search terms."""
         return current().store.search(query, limit)
@@ -75,6 +80,11 @@ def create_server(service=None):
     def list_jobs(limit: int = 20) -> list[dict]:
         """Recent jobs of both kinds, newest first: papers processed and questions asked."""
         return current().store.jobs(limit=limit)
+
+    @mcp.tool()
+    def list_jobs_page(limit: int = 20, cursor: str | None = None) -> dict:
+        """Page through all jobs using next_cursor; no total-history cutoff."""
+        return current().store.job_page(limit=limit, cursor=cursor)
 
     return mcp
 

@@ -10,6 +10,7 @@ import pytest
 from byeori.local.llm import Generation, ModelError, OllamaBackend
 from byeori.local.service import HEADINGS, LocalService, parse_tei
 from byeori.local.store import LocalStore
+from local_helpers import ollama_transport
 
 XML = b'<TEI><text><body><div><head>Results</head><p>The cohort included 42 samples.</p></div></body></text></TEI>'
 
@@ -129,7 +130,7 @@ def test_ollama_request_and_stop_reason():
         requests.append(json.loads(request.content))
         return httpx.Response(200, json={"done": True, "done_reason": "stop",
             "message": {"content": "result", "thinking": "not published"}, "model": "test"})
-    backend = OllamaBackend("test", transport=httpx.MockTransport(handler))
+    backend = OllamaBackend("test", transport=ollama_transport(handler))
     assert backend.generate("system", "paper").text == "result"
     assert requests[0]["stream"] is False
     assert requests[0]["options"]["num_ctx"] == 32768
@@ -141,7 +142,7 @@ def test_ollama_request_and_stop_reason():
     {"done": True, "done_reason": "stop", "message": {"content": ""}},
 ])
 def test_ollama_does_not_publish_truncated_or_empty_response(response):
-    backend = OllamaBackend("test", transport=httpx.MockTransport(lambda r: httpx.Response(200, json=response)))
+    backend = OllamaBackend("test", transport=ollama_transport(lambda r: httpx.Response(200, json=response)))
     with pytest.raises(ModelError):
         backend.generate("system", "paper")
 
@@ -163,7 +164,7 @@ def test_mcp_tools_use_local_service(local):
         tools = await server.list_tools()
         assert {t.name for t in tools} == {"list_papers", "search_wiki", "read_evidence_note",
             "list_note_revisions", "read_paper_context", "ask_byeori", "cancel_job", "get_job",
-            "list_jobs"}
+            "list_jobs", "list_papers_page", "list_jobs_page"}
         result = await server.call_tool("search_wiki", {"query": "cohort"})
         assert service.store.paper(pid)["stem"] in str(result)
     asyncio.run(check())
