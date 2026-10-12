@@ -363,7 +363,7 @@ def test_the_mac_is_held_awake_only_while_a_job_runs(local, monkeypatch):
     monkeypatch.setattr(module.SleepGuard, "spawn", staticmethod(Caffeinate))
     service.submit_note(pid)
     summary = worker(service, prevent_sleep=True).run()
-    assert launched == [["/usr/bin/caffeinate", "-i", "-w", str(os.getpid())]], "one hold per job"
+    assert launched == [["/usr/bin/caffeinate", "-i", "-s", "-w", str(os.getpid())]], "one hold per job"
     finished = [json.loads(line) for line in open(summary["log"], encoding="utf-8")
                 if '"finished"' in line]
     assert finished[0]["detail"]["sleep_prevented"] is True

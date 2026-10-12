@@ -1,5 +1,21 @@
 # Changelog
 
+## Local runtime (this fork), unreleased
+
+See `docs/LOCAL-DEVELOPMENT.md`. The AWS commands below are unchanged.
+
+- **Worker, resume, backups (2026-10-12).** `byeori-local worker` runs queued jobs and outlives
+  the process that submitted them (`--submit`, or `BYEORI_LOCAL_EXECUTOR=worker` for MCP
+  questions); jobs are fenced to the worker that claimed them, stop and cancel before the next
+  model call, and are queued again after an interruption. A paper resumes from the extraction and
+  part digests an earlier attempt stored. `backup`, `restore` (into a new directory only),
+  `reindex` and `migrate --plan/--apply`; schema 6, WAL. The model's stop is split into
+  `output_truncated`, `abnormal_stop` and `recovery_pending`.
+- **Stabilization (2026-10-01).** The eleven defects reproduced in
+  `docs/LOCAL-LLM-REVIEW-2026-10-01.md` are fixed and covered by regression tests.
+- **Work assistant.** `byeori-assistant` drafts note summaries, commit summaries, file
+  classifications and reports from inputs a person names (`docs/LOCAL-ASSISTANT.md`).
+
 ## Unreleased
 
 Re-exported from the An Lab workspace on 2026-09-28 (see `RELEASE-SOURCE`).

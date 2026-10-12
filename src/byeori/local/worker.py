@@ -80,11 +80,14 @@ class Heartbeat:
 
 
 class SleepGuard:
-    """Keeps an unattended Mac from idle-sleeping while a job runs.
+    """Keeps an unattended Mac awake while a job runs.
 
-    Measured on this machine: macOS entered maintenance sleep for 99 seconds in the middle of a
-    digest, and the model's work paused with it. caffeinate -i holds the same assertion a person
-    holding the machine awake would, and -w ends it if this process dies without cleaning up.
+    Measured on this machine, which sleeps after one idle minute: macOS entered maintenance sleep
+    for 99 seconds in the middle of a digest, and the model's work paused with it. Holding only
+    the idle-sleep assertion (-i) was not enough: the machine was already asleep and running in
+    DarkWake windows, and it went back to sleep for 944 seconds during a final note. -s holds
+    PreventSystemSleep, which keeps a dark-woken Mac on AC power from sleeping again; -i covers a
+    machine that is fully awake. -w ends both if this process dies without cleaning up.
     """
 
     spawn = staticmethod(subprocess.Popen)
@@ -97,7 +100,7 @@ class SleepGuard:
     def __enter__(self):
         if self.command:
             try:
-                self.process = self.spawn([self.command, "-i", "-w", str(os.getpid())],
+                self.process = self.spawn([self.command, "-i", "-s", "-w", str(os.getpid())],
                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except OSError:
                 self.process = None

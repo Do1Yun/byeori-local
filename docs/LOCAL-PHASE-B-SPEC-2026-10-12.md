@@ -674,3 +674,71 @@ kill -TERM %1                                                                # �
 | 백업 중 쓰기 | 공유/배타 flock로 DB 접근만 잠깐 멈춤 | worker 전체 정지는 수십 분짜리 모델 호출을 기다려야 한다; DB 파일 raw 복사는 WAL과 함께 비일관 |
 | 색인 | FTS 재구축을 활성 노트 기준으로만 | 과거 revision까지 색인하면 검색이 물러난 노트를 답한다(R01~R02에서 바로잡은 동작) |
 | 업무 도우미 | 이번 범위 밖 | worker 통합은 두 런타임의 job 모델을 맞춘 뒤 별도로 |
+
+---
+
+## 10. 구현 결과 — 2026-10-12
+
+4~8절을 구현했다. 코드는 `src/byeori/local/{store,service,llm,locking,jobs,cli,mcp_server}.py`와 신규 `worker.py`·`checkpoint.py`·`backup.py`에 있다. 테스트는 신규 `tests/test_local_{worker,checkpoint,backup}.py`에 있다. 로컬 테스트는 170개에서 220개로, 전체는 2,509개 통과(1 skip)다. 2026-10-01 재현 스크립트는 모든 항목에서 수정된 동작을 보인다.
+
+### 10.1 실제 워크스페이스에서 확인한 것 (6절 1~6단계)
+
+| 단계 | 결과 |
+| --- | --- |
+| 수동 복사본 | `.byeori-local.pre-schema6-20261012` (schema 4, 원본과 `diff -r` 동일) |
+| `backup` (schema 4 그대로) | 파일 204개·107 MB, 검증 통과, 참조 누락 0. 백업은 워크스페이스를 열지 않으므로 schema가 바뀌지 않음 |
+| `migrate --plan` → `--apply` | 4→6, 논문 11·노트 11·revision 27·job 51 보존, `journal_mode` delete→wal |
+| `doctor`, `check --deep` | 모델 local, recovery_pending 없음, GROBID 0.9.1 ready, 문제 0 (원본 PDF·TEI 모두 재해시) |
+| `backup` (schema 6) → `restore` (새 디렉터리) | 0.14초·0.21초. 복원본 deep check 문제 0, 제목 검색 11/11 |
+| `reindex` | 복원본에서 다시 만든 색인이 실제 색인과 docs 11행·sections 88행 모두 동일. 실제 워크스페이스에서 실행해도 문제 0 |
+
+### 10.2 실제 모델로 확인한 중단과 재개 (6절 7단계)
+
+복원본에서 진행했다. 실제 워크스페이스의 활성 노트는 바꾸지 않았다. 대상은 Vaswani(15쪽, 85블록)와 chen-2026(56블록)이다. `qwen3:8b`, context 16384, timeout 1800을 썼고, 이 설정에서 두 논문 모두 3개 part로 나뉜다. 시각은 job 이벤트 기록이다.
+
+| 시각(UTC) | 사건 |
+| --- | --- |
+| 12:32:23 | **시험 1 (Vaswani)**: worker가 job `2fd256dc`를 claim. 추출과 메타데이터에 12초 |
+| 12:32:35–12:35:34 | part 1 생성, 179초. 이 중 약 99초는 Mac이 잠든 시간 |
+| 12:35:55 | part 2 생성 중 SIGTERM |
+| 12:36:31 | part 2 완료(57초) 후 part 3 앞에서 멈춤. `interrupted`, 새 job `f0165dff`(attempt 2)로 재큐 |
+| 12:38:31 | 새 worker가 claim. 추출과 digest 2개를 checkpoint에서 읽고 7초 만에 part 3에 도달 |
+| 12:38:38–12:39:16 | part 3만 생성, 38초 |
+| 12:39:16–12:41:26 | 노트 생성 129초 → **구조 검증에서 거부**. 노트가 `[P0051-P0053]`을 인용했고, 범위를 펼치면 나오는 `P0052`는 어느 digest에도 남지 않은 문단이다. R04에서 넣은 "제공한 근거만 인용" 검사가 의도대로 막은 것이며, 재개와는 무관하다(재개하지 않아도 같은 digest가 나온다) |
+| 12:42:39 | **시험 2 (chen-2026, 56블록)**: job `eacb10ae` claim |
+| 12:42:42–12:43:39 | part 1 생성, 57초. part 2가 시작되는 순간 SIGTERM(자동) |
+| 12:45:22 | part 2 완료(103초) 후 멈춤. `d92763dc`(attempt 2)로 재큐 |
+| 12:45:32 | 새 worker가 추출과 digest 2개를 읽고 1초 만에 part 3에 도달 |
+| 12:45:33–12:46:17 | part 3만 생성, 44초 |
+| 12:46:17–13:14:53 | 노트 생성. 모델이 실제로 계산한 시간은 118.6초, 벽시계로는 28.6분. Mac이 21:46:32 KST부터 944초, 22:03:01부터 약 11분 잠들었다(`caffeinate -i`만 쥔 상태) |
+| 13:14:53 | 검증·게시 성공. 활성 노트는 중단된 job의 `document.json`을 가리키고, 블록 56/56 제시, `check --deep` 문제 0 |
+
+두 시험 모두 재개는 명세대로 동작했다. SIGTERM은 진행 중인 호출을 끝낸 뒤 다음 part 앞에서 멈췄고, 새 job은 이전 job의 추출과 digest 2개를 다시 읽어 모델 호출을 part 1개와 노트 1개로 줄였다. 다시 묻지 않은 part 두 개는 시험 1에서 236초, 시험 2에서 160초였다. 시험 2는 게시까지 마쳐 8절의 완료 조건("실제 강제 중단 뒤 재시작에서 앞선 part를 다시 호출하지 않고 노트가 게시됨")을 충족했다. 시험 1의 게시 거부는 분할 노트가 digest에 없는 문단을 인용하는 기존 품질 문제이며 단계 C(구조화 claim)의 과제다.
+
+**실행 중 발견한 결함 — 수정함.** 이 Mac은 `pmset` 설정이 `sleep 1`(유휴 1분 뒤 잠자기)이고 Power Nap이 켜져 있다. 사람이 없는 동안 시스템은 잠들어 있다가 짧은 DarkWake 구간에서만 계산했다. 시험 1의 part 1 도중 99초(21:33:50 KST, "Maintenance Sleep")를 잃었고, macOS의 monotonic clock은 잠든 시간을 세지 않아 job 시간이 248초가 아니라 151.5초로 기록됐다. 그래서 worker가 job 동안 `caffeinate -i`를 쥐게 했다. 그러나 시험 2에서는 그 상태로도 노트 생성 중에 944초를 잠들었다. `PreventUserIdleSystemSleep`(-i)은 이미 잠든 뒤 DarkWake로 깨어난 Mac이 다시 잠드는 것을 막지 못하기 때문이다. worker는 이제 job을 실행하는 동안 `caffeinate -i -s -w <worker pid>`를 쥔다. `-s`(`PreventSystemSleep`, AC 전원에서 유효)는 Power Nap 중 Time Machine이 쓰는 것과 같은 assertion이다. job이 없을 때는 잠들 수 있고, `--allow-sleep`으로 끌 수 있다. 로그 시간은 벽시계로 기록한다. 이 수정은 직접 확인했다. 22:30:30 KST DarkWake 직후 `caffeinate -i -s`를 5분간 쥐었더니 그동안 잠들지 않았다(이전에는 DarkWake 후 45~60초 안에 다시 잠들었다). assertion이 끝난 지 11초 뒤인 22:36:00에는 925초간 잠들었다(`pmset -g log`). 다만 긴 job 전체를 이 설정으로 돌려 본 것은 아니다.
+
+**메모리.** 모델 적재 전 시스템 여유 메모리는 87%, swap 사용은 2,027 MB였다. 최종 노트 생성 중에는 여유 43%, swap 1,363 MB였다. `ollama ps` 기준 상주 크기는 6.6 GB(100% GPU, context 16384)다. 한 편의 관측값이며 프로필 검증으로 쓰지 않는다.
+
+### 10.3 명세에서 바꾼 점과 이유
+
+| 명세 | 구현 | 이유 |
+| --- | --- | --- |
+| 4.1 유지보수 공유/배타 flock (9절 "백업 중 쓰기") | **잠금 없이 순서로 해결**: catalog를 backup API로 먼저 복사하고 파일은 그 뒤에 복사 | 파일은 항상 그 파일을 가리키는 트랜잭션보다 먼저 쓰이고 이후 바뀌지 않는다. 따라서 snapshot이 가리키는 파일은 반드시 존재한다. 9절 결정의 목적(worker를 멈추지 않음, DB 파일 raw 복사 금지)은 그대로 지킨다. 같은 스레드에서 공유/배타 flock이 중첩되면 교착될 위험이 있어 이를 없앴다. 쓰기 중 백업을 복원하는 테스트(T31)로 확인했다 |
+| 4.5 `candidate` checkpoint | **두지 않음** | 최종 노트가 생성된 뒤에는 정지 요청이 와도 검증·게시를 마친다(`interruptible=False`). 그래서 생성된 candidate가 버려지는 경로가 없다. 검증에 실패한 candidate는 `revalidate`가 맡는다. 같은 입력으로 다시 생성을 요청하는 것은 재처리의 목적과 맞지 않는다 |
+| 4.5 checkpoint 사용 조건 | **추가 규칙**: 그 논문의 노트가 checkpoint보다 나중에 게시됐으면 쓰지 않음 | GROBID TEI에는 처리 시각(`when=`)이 들어가, 같은 PDF도 추출할 때마다 추출 ID가 달라진다(실제 워크스페이스: Vaswani 추출 14개의 해시가 모두 다름. 두 논문은 시각을 빼도 본문이 달랐음). 따라서 digest 재사용은 추출 재사용을 전제로 한다. 게시된 논문까지 재사용하면 "다시 처리 = 새로 추출"이라는 기존 의미가 바뀐다. 재개는 끝나지 않은 작업에만 적용한다 |
+| 4.5 표 (명세에 없음) | **`digest-truncated` 표식 추가** | 실패 18건 중 7건이 출력 한도였다. 같은 part는 다시 물어도 같은 방식으로 잘리므로, 재개할 때 묻지 않고 바로 나눈다 |
+| 4.1 `checkpoints` UNIQUE(paper, stage, key) | **여러 행 허용**, 최신 유효 행 사용 | 파일이 손상된 checkpoint를 지우지 않고 새로 기록할 수 있게 한다 |
+| 4.5 키의 `server_version` | **키에서 제외**, 메타에 기록 | Ollama를 업그레이드할 때마다 모든 checkpoint가 무효가 되는 것을 피한다. 모델 digest와 template은 키에 남긴다 |
+| 4.2 `release_claim` | **두지 않음**: 추출기가 응답하지 않으면 논문 job을 claim하지 않고 질문·메타데이터만 claim | claim과 release가 반복되며 이벤트가 30초마다 쌓이는 것을 막는다 |
+| 4.3 `ExtractorUnavailable` | 연결 거부·연결 timeout에만 적용 | 읽기 timeout은 PDF 때문일 수 있으므로 일반 추출 실패로 남긴다 |
+| (명세에 없음) | inline `metadata`·`revalidate` job의 `kind`가 `note`에서 `metadata`·`revalidate`로 바뀜 | worker가 kind로 실행 경로를 고르기 때문이다. 과거 행은 그대로 둔다 |
+| (명세에 없음) | worker의 잠자기 방지, 벽시계 기록 | 10.2의 실측 결함 |
+
+### 10.4 남은 일
+
+- launchd 설치와 장기(며칠) 무인 운영은 검증하지 않았다(4.8은 문서 예시만 있음). `caffeinate -s`로 긴 job 전체를 끝까지 돌려 보지도 않았다.
+- 이 Mac은 `sleep 1`이다. 무인 운영에서는 job 단위 assertion 대신 시스템 설정(`sudo pmset -c sleep 0`)을 바꾸는 방법도 있다. 이는 사용자가 정할 일이라 바꾸지 않았다.
+- 백업 예약, 외장 디스크 복제와 `BYEORI_LOCAL_BACKUP_HINT`는 구현하지 않았다.
+- 같은 사용자가 여러 워크스페이스를 둘 때 worker는 워크스페이스마다 하나다. endpoint 잠금이 모델 호출은 직렬화하지만 공정성 정책은 없다.
+- 업무 도우미(`byeori-assistant`)의 job은 이 worker와 통합하지 않았다.
+- 단계 C(구조화 claim, 원문 재독, v2 평가)와 47개 결함의 사람 판정.

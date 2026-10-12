@@ -5,6 +5,8 @@
 
 2026-10-01에 [검토 문서](LOCAL-LLM-REVIEW-2026-10-01.md)의 R01~R11에 대한 1차 안정화를 구현했습니다. [수정 명세서](LOCAL-LLM-REMEDIATION-SPEC-2026-10-01.md)의 마지막 절에 구현 범위와 남은 항목을 기록합니다. schema는 5이며 기존 4의 노트·원본을 보존하는 컬럼/테이블 추가 방식으로 갱신합니다. 실제 사용자 워크스페이스를 이 작업에서 갱신하지는 않았습니다.
 
+2026-10-12에 [단계 B 명세](LOCAL-PHASE-B-SPEC-2026-10-12.md)를 구현했습니다: 제출한 프로세스보다 오래 사는 `worker`, 이전 시도가 남긴 추출·digest를 다시 읽는 재개, 검증하는 백업과 새 디렉터리 복원, 색인 재구축, schema 6. 실제 워크스페이스(논문 11편)를 4→6으로 올리고 백업·복원·재색인을 확인했습니다. 결과는 명세 10절에 있습니다.
+
 작업 메모 정리·로컬 커밋 요약·파일 분류 제안·보고서 초안은 별도
 [`byeori-assistant` 워크스페이스](LOCAL-ASSISTANT.md)에서 실행할 수 있습니다.
 
@@ -34,17 +36,18 @@
 | 창에 안 들어가는 논문의 부분 분할 생성과 coverage 기록 | 실서비스 검증 |
 | 토큰 예산 추정과 입력 잘림 감지 | 실서비스 검증 (실측 2지점 기준) |
 | 필요한 원문 재독(생성 중 자동) | 미구현 |
-| 중간 단계부터의 작업 재개 | 미구현 |
+| 중간 단계부터의 작업 재개(추출·part digest checkpoint) | 실서비스 검증 (qwen3:8b, context 16384: 논문 2편을 part 2에서 SIGTERM으로 멈추고 재개. 추출과 digest 2개를 다시 읽어 part 3과 노트만 생성, 1편 게시) |
+| 지속 worker·작업 큐·fencing·재큐 | 실서비스 검증 (위 시험의 claim·중단·재큐·재개). 추출기·복구 대기는 mock 검증 |
 | TEI 헤더 메타데이터 추출(제목·저자·연도·DOI·학술지) | 실서비스 검증 |
 | OpenAlex로 연도·학술지·work ID 확정과 PDF 대조 승인 | 실서비스 검증 |
 | 노트를 다시 쓰지 않는 메타데이터 정정 | mock 검증 |
 | 기존 위키와 같은 문서 식별자·프론트매터·색인 컬럼 | mock 검증 (upstream 검증기·concept 추출기 직접 호출) |
 | Concept·Overview 생성, AWS 저장소 연결 | 미구현 |
 | catalog/job cursor 페이지네이션·제한 없는 내부 batch 순회 | mock 검증 |
-| 색인 재구축·백업·복원 | 미구현 |
+| 색인 재구축·백업·새 디렉터리 복원 | 실서비스 검증 (실제 워크스페이스 11편: 백업 검증, 복원 후 deep check·제목 검색 11/11, 재색인 결과가 기존 색인과 동일) |
 | 게시 후 terminal receipt와 DB 기반 누락 receipt 복구 | mock 검증 |
-| schema migration | 실서비스 검증 (노트 3개가 있는 워크스페이스를 제자리에서 2→3으로 올림) |
-| 무모니터 Mac 운영 절차 | 미구현 |
+| schema migration | 실서비스 검증 (실제 워크스페이스를 4→6으로 올림: 논문 11·revision 27·job 51 보존, `check --deep` 문제 없음). `migrate --plan`으로 먼저 확인 가능 |
+| 무모니터 Mac 운영 절차 | 절차와 launchd 예시만 문서화. 설치와 장기 운영은 미검증 |
 | 주장↔인용 검토표 생성(`review`) | 실서비스 검증 |
 | 실제 논문 다수에 대한 품질·성능 평가 | 진행 중 (`docs/evaluation/`) |
 
@@ -75,6 +78,9 @@ Ollama는 macOS 호스트에서 실행하는 구성을 우선합니다. GROBID�
 | `BYEORI_OUTPUT_TOKENS` | `4096` |
 | `BYEORI_LOCAL_RUNTIME_DIR` | 사용자별 임시 디렉터리 아래 공용 추론 잠금 폴더 |
 | `BYEORI_OPENALEX_API_KEY` | 없음: 선택적 Bearer 인증; 로그에 기록하지 않음 |
+| `BYEORI_OLLAMA_TIMEOUT` (`--timeout`) | `600`초. 한 모델 호출의 상한. worker로 긴 논문을 돌릴 때는 `1800`을 권합니다 |
+| `BYEORI_LOCAL_EXECUTOR` | `inline`: MCP 질문을 서버의 thread가 실행. `worker`: 큐에 넣고 `byeori-local worker`가 실행 |
+| `BYEORI_LOCAL_AUTO_MIGRATE` | `on`. `off`면 낮은 schema 워크스페이스를 열지 않고 `migrate --plan`을 안내 |
 
 워크스페이스는 반드시 `BYEORI_LOCAL_DATA` 또는 `--data-dir`로 지정하며, 없는 디렉터리는 `init`에서만 만듭니다. 현재 작업 폴더에 조용히 워크스페이스를 만들지 않습니다: MCP 클라이언트가 임의의 폴더에서 서버를 실행해도 빈 저장소를 새로 열지 않습니다.
 
@@ -98,6 +104,14 @@ byeori-local check --deep
 byeori-local list --limit 50
 byeori-local status --limit 20
 byeori-local reconcile-receipts
+byeori-local process <paper_id>|--all --submit   # worker 큐에 넣기 (ask/metadata/revalidate도 --submit)
+byeori-local process <paper_id> --no-resume      # 저장된 checkpoint를 무시하고 처음부터
+byeori-local worker [--once] [--max-jobs N]
+byeori-local checkpoints <paper_id>
+byeori-local backup <새 디렉터리> [--include-inbox]
+byeori-local restore <백업 디렉터리> <아직 없는 디렉터리>
+byeori-local reindex
+byeori-local migrate --plan | --apply
 byeori-local revalidate --all
 byeori-local metadata --all
 byeori-local review <문서 식별자> --out docs/evaluation/<이름>.md
@@ -133,9 +147,62 @@ byeori-local review <문서 식별자> --out docs/evaluation/<이름>.md
 
 검증만 실패한 작업은 `byeori-local revalidate <job_id>`로 **모델을 다시 호출하지 않고** 게시할 수 있습니다. 노트 본문은 그 작업이 이미 쓴 것이고 `runs/<job_id>/candidate.md`에 남아 있으므로, 검사 규칙이 나중에 그 표기를 읽게 되면 한 시간짜리 생성을 다시 하지 않습니다. 게시된 노트는 `written_by_job`으로 어느 작업이 썼는지 밝힙니다. 프론트매터와 `## 1. Document Information`을 애플리케이션이 쓰는 것과 같은 이유이며, 실제 모델이 흔히 만드는 형식 편차 때문에 내용이 올바른 노트를 버리지 않습니다. section 이름과 순서는 계약이므로 그대로 검사합니다.
 
-작업 중 프로세스가 종료되면 다음 `process`가 이전 작업을 `interrupted`로 표시하고 새 작업을 시작합니다. 현재 중간 단계부터 재개하지는 않습니다. 워크스페이스당 처리 worker는 OS 파일 잠금으로 하나만 허용합니다.
+작업 중 프로세스가 종료되면 다음 `process`가 이전 작업을 `interrupted`로 표시하고 새 작업을 시작합니다. 새 작업은 이전 작업이 남긴 추출과 part digest를 checkpoint로 다시 읽습니다(아래 "Worker와 재개"). 워크스페이스당 처리 worker는 OS 파일 잠금으로 하나만 허용합니다.
 
 이전 스키마(노트에 revision이 없던 버전)로 만든 워크스페이스에 이미 게시된 노트가 있으면 열기를 거부합니다. 파일은 모두 보존되며, 이 릴리스로 만든 워크스페이스에서 `process`를 다시 실행하면 각 노트가 revision을 갖습니다.
+
+## Worker와 재개
+
+`byeori-local worker`는 워크스페이스의 `.worker.lock`을 살아 있는 동안 쥐고, 큐에 있는 job을 하나씩 가져갑니다. 질문이 논문보다 먼저이고, 같은 우선순위에서는 오래된 것부터입니다. 진행 중인 논문 job을 질문 때문에 중단하지는 않습니다. worker가 떠 있는 동안 같은 워크스페이스의 `process`·`metadata`·`revalidate`는 `worker_running`으로 거부되며 `--submit`을 안내합니다. 큐에 넣는 쪽(`--submit`, worker 모드의 MCP `ask_byeori`)이 종료돼도 job은 큐에 남습니다. 제출 결과의 `worker_alive`가 false면 실행할 worker가 없다는 뜻입니다.
+
+job 행에는 `worker_id`·`attempt`·`heartbeat_at`·`started_at`·`cancel_ack_at`·`error_code`가 기록되고, 그 job의 상태 변경은 claim한 worker만 할 수 있습니다(fencing). worker는 15초마다 heartbeat를 씁니다. `status <job_id>`와 MCP `get_job`은 그 job의 최근 이벤트와 worker 진단(`alive`, `state`)을 함께 돌려줍니다. `state`는 `idle`·`running`·`waiting_extractor`·`paused_recovery_pending`·`stopped` 중 하나입니다.
+
+- **취소**: 모든 모델 호출 직전(part 경계 포함)에 확인합니다. 이미 시작된 호출은 끝날 때까지 기다리고 그 결과는 게시하지 않습니다. 저장된 checkpoint는 남습니다.
+- **정지**: 첫 SIGTERM/Ctrl+C는 다음 모델 호출 전에 멈추고 job을 `interrupted`로 남긴 뒤 같은 논문을 새 job(`resumed_from`, `attempt+1`)으로 다시 큐에 넣습니다. 최종 노트가 이미 생성됐다면 검증·게시까지 마칩니다. 두 번째 신호는 즉시 종료합니다.
+- **재시작**: 새 worker는 이전 worker가 `running`으로 남긴 job을 `interrupted`로 정리하고 최대 3회까지 다시 큐에 넣습니다(`--no-resume-interrupted`로 끔).
+- **대기**: GROBID가 응답하지 않으면 논문 job은 큐에 둔 채 질문·메타데이터만 처리합니다. 이전 요청이 timeout으로 끝나 endpoint가 `recovery_pending`이면 아무것도 보내지 않고 기다립니다. 사람이 `recover-runtime --acknowledge-idle`을 실행하면 다시 진행합니다. timeout된 job은 자동으로 다시 보내지 않습니다.
+- **잠자기 방지**: job을 실행하는 동안 `caffeinate -i -s -w <worker pid>`를 유지합니다. job이 없을 때는 잠들 수 있고, `--allow-sleep`으로 끌 수 있습니다. 유휴 1분 뒤 잠드는 이 Mac에서 실측해 보니, `-i`만으로는 DarkWake로 깨어난 시스템이 다시 잠드는 것을 막지 못했습니다(노트 생성 중 944초 정지). `-s`(PreventSystemSleep)는 AC 전원에서만 유효합니다.
+- **로그**: `<워크스페이스>/logs/worker-<시각>-<id>.jsonl`. ID·단계·오류 코드·소요 시간(벽시계 기준)만 쓰며 논문 본문이나 prompt는 쓰지 않습니다.
+
+**재개.** 노트 job은 진행하면서 checkpoint를 남깁니다. 추출(TEI와 문단 JSON) 하나와 part별 digest입니다. 출력 한도에 걸린 part는 "잘림" 표식도 남깁니다. checkpoint는 파일을 복사하지 않고, 그 job의 `runs/` 파일 경로와 hash만 가리킵니다. 키는 원본 hash, 추출기 이름·버전, 추출 ID, 모델 digest와 template, context·출력 한도, prompt 버전, 입력 hash입니다. 같은 논문을 다시 처리하면 키가 맞고 파일 hash도 맞는 단계만 다시 읽습니다. 표식이 있는 part는 모델에 묻지 않고 바로 반으로 나눕니다. 파일 hash가 다르면 그 checkpoint는 쓰지 않고 `checkpoint_corrupt` 이벤트를 남기며, 파일은 지우지 않습니다. 그 논문의 노트가 checkpoint 이후에 게시됐다면 그 checkpoint는 끝난 작업의 것이므로 쓰지 않습니다. 즉 게시된 논문을 다시 처리하면 처음부터 합니다. 재개한 노트는 이전 job의 `document.json`을 가리킵니다. receipt의 `checkpoints.reused`와 `coverage.parts_reused`에 무엇을 다시 읽었는지 기록됩니다.
+
+**출력 한도.** 모델 종료는 세 가지 오류로 나뉩니다. 출력 한도 도달(`output_truncated`), 비정상 종료(`abnormal_stop`), 복구 대기(`recovery_pending`)입니다. part를 반으로 나누는 것은 출력 한도 도달일 때뿐입니다. 최종 노트가 출력 한도에 걸리면 context가 허락하는 한 출력 한도를 최대 두 배로 늘려 한 번 다시 요청합니다. 두 번째도 잘리면 게시하지 않습니다.
+
+### 무인 운영 (예시)
+
+Ollama는 `brew services`의 launchd 항목으로 이미 관리됩니다. worker를 상주시키려면 아래와 같은 LaunchAgent를 **직접** 설치합니다(`REPO_PATH`는 저장소 절대 경로). 설치 후의 장기 운영은 아직 검증하지 않았습니다. GROBID(Colima)는 worker가 띄우지 않으므로 직접 올려 둡니다.
+
+```xml
+<!-- ~/Library/LaunchAgents/local.byeori.worker.plist -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>local.byeori.worker</string>
+  <key>ProgramArguments</key><array>
+    <string>REPO_PATH/.venv/bin/byeori-local</string>
+    <string>--timeout</string><string>1800</string><string>worker</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>BYEORI_LOCAL_DATA</key><string>REPO_PATH/.byeori-local</string>
+    <key>BYEORI_LOCAL_MODEL</key><string>qwen3:8b</string>
+    <key>BYEORI_LOCAL_EXECUTOR</key><string>worker</string>
+  </dict>
+  <key>KeepAlive</key><true/>
+  <key>RunAtLoad</key><true/>
+  <key>StandardErrorPath</key><string>REPO_PATH/.byeori-local/logs/launchd.err</string>
+</dict></plist>
+```
+
+## 백업·복원
+
+```text
+byeori-local backup ~/byeori-backups/$(date +%Y%m%d)
+byeori-local restore ~/byeori-backups/<날짜> <아직 없는 디렉터리>
+```
+
+`backup`은 catalog를 SQLite backup API로 먼저 복사하고 파일을 그 뒤에 복사합니다. 파일은 항상 그 파일을 가리키는 트랜잭션보다 먼저 쓰이고 이후 바뀌지 않으므로, 이 순서면 worker를 멈추지 않아도 snapshot이 가리키는 파일은 모두 존재합니다. snapshot 뒤에 생긴 파일도 복사되며 `unreferenced`로 표시됩니다. `papers/`·`wiki/`·`runs/`·`quarantine/`·`logs/`를 복사합니다. `inbox/`는 `--include-inbox`일 때만 복사합니다. 복사한 파일은 모두 다시 읽어 manifest의 hash와 대조합니다. 대상 디렉터리는 비어 있어야 하고 워크스페이스 안이면 안 됩니다. 같은 디스크에 만든 백업은 디스크 고장에 대비하지 못하며, 결과에 그 경고가 표시됩니다.
+
+`restore`는 아직 없는 디렉터리에만 복원합니다. 백업의 모든 파일을 manifest와 먼저 대조하고, 하나라도 다르면 아무것도 만들지 않습니다. 복원 뒤에는 필요하면 migration을 하고 실행 중이던 job을 `interrupted`(`restored_while_running`)로 기록한 다음 색인을 재구축합니다. `check --deep`과, 활성 노트마다 제목으로 검색해 찾히는지(search smoke)를 확인합니다. 하나라도 실패하면 `restored_with_problems`(종료 코드 1)이며 디렉터리는 지우지 않습니다. 결과는 `RESTORED.json`에 남습니다.
+
+`reindex`는 활성 revision 파일로 검색 색인을 한 트랜잭션에서 다시 만듭니다. 게시와 같은 코드를 쓰며, hash가 맞지 않는 노트는 색인에서 빼고 보고합니다. `migrate --plan`은 DB를 바꾸지 않고 적용될 문장을 보여 줍니다. `BYEORI_LOCAL_AUTO_MIGRATE=off`이면 `migrate --apply` 전에는 낮은 schema 워크스페이스를 열지 않습니다. catalog는 schema 6부터 WAL 모드여서 worker·MCP 서버·CLI가 서로 읽기를 기다리지 않습니다.
 
 ## MCP 연결
 
@@ -155,7 +222,9 @@ byeori-local review <문서 식별자> --out docs/evaluation/<이름>.md
 }
 ```
 
-도구: `list_papers`, `list_papers_page`, `search_wiki`, `read_evidence_note`, `list_note_revisions`, `read_paper_context`, `ask_byeori`, `get_job`, `list_jobs`, `list_jobs_page`, `cancel_job`.
+도구: `list_papers`, `list_papers_page`, `search_wiki`, `read_evidence_note`, `list_note_revisions`, `read_paper_context`, `ask_byeori`, `get_job`, `list_jobs`, `list_jobs_page`, `cancel_job`, `worker_status`.
+
+`BYEORI_LOCAL_EXECUTOR=worker`로 서버를 시작하면 `ask_byeori`는 질문을 worker 큐에 넣고 `executor: worker`와 `worker_alive`를 돌려줍니다. 서버가 종료돼도 질문은 남고, `byeori-local worker`가 답합니다. `get_job`은 job의 최근 이벤트와 worker 진단을 함께 반환합니다.
 
 기존 `list_papers`·`list_jobs`의 list 반환 형식은 유지합니다. 전체 자료는 `list_papers_page`·`list_jobs_page`의 `next_cursor`로 순회합니다. 같은 Ollama endpoint를 사용하는 노트·digest·질문·번역·audit는 공용 OS 잠금과 thread 잠금으로 직렬 실행합니다. 복수 워크스페이스/앱의 `BYEORI_LOCAL_RUNTIME_DIR`는 같아야 하며, doctor가 실제 잠금 경로를 출력합니다. 이 잠금은 byeori를 거치지 않는 다른 앱의 호출을 통제하지 못합니다.
 
@@ -198,16 +267,17 @@ Apple M4 / 10 core / RAM 16 GB / macOS 15.7.4, GROBID 0.9.1-crf(colima 4 cpu · 
 - 분할로 쓴 노트는 원문을 한 번에 읽고 쓴 노트보다 귀속 오류 위험이 큽니다. 실제 실행에서 분할 노트가 base 모델의 FLOPs(3.3×10^18)를 big 모델의 값으로 적은 사례를 확인했습니다. 수치를 쓰려면 `read_paper_context`로 해당 문단을 확인해야 하며, 프론트매터의 `generation_path`로 어느 경로로 쓴 노트인지 구분할 수 있습니다.
 - digest 실패 블록은 자동 생략하여 게시하지 않습니다. candidate/실패 기록을 보존합니다. 최종 노트의 인용은 digest에 유지된 ID로 한정합니다. digest 전체가 노트 한 패스에 들어가지 않으면 필요한 context를 알려주고 **거부합니다**. digest를 다시 합치는 라운드는 넣지 않았습니다: 실측에서 2개 합치기가 입력당 출력 1.76배, 4개가 1.22배로 압축이 아니라 팽창이었고, 수렴하는 라운드가 없습니다. 논문 자체의 digest는 약 0.54로 압축됩니다.
 - 질문은 노트 기반이며 자동 원문 재독·위키 편집은 하지 않습니다. MCP로 원문 문단을 직접 확인할 수 있습니다.
-- Concept·Overview 생성, AWS 저장소 연결, 자동 작업 큐, 백업 자동화는 후속 구현입니다.
-- MCP는 stdio입니다. 질문은 job이므로 클라이언트 timeout 문제는 없지만, 서버 프로세스가 죽으면 그 안에서 돌던 질문은 사라지고 `interrupted`로 기록됩니다.
-- 이전 스키마 워크스페이스는 제자리에서 올립니다(컬럼 추가). 올릴 수 없는 변경이 나오면 파일을 보존한 채 거부하고, 이 릴리스로 만든 워크스페이스에서 다시 게시하도록 안내합니다.
+- Concept·Overview 생성, AWS 저장소 연결, 백업 예약(자동 주기 실행)은 후속 구현입니다.
+- MCP는 stdio입니다. 질문은 job이므로 클라이언트 timeout 문제는 없습니다. 기본(`inline`) 모드에서는 서버 프로세스가 죽으면 그 안에서 돌던 질문이 `interrupted`로 기록됩니다. `BYEORI_LOCAL_EXECUTOR=worker`이면 질문은 worker 큐에 남습니다.
+- worker는 모델 호출 도중에는 멈추지 못합니다. Ollama에 즉시 중단 수단이 없기 때문이며, 정지·취소는 다음 호출 직전에 적용됩니다. worker 하나가 워크스페이스 하나를 맡습니다.
+- 이전 스키마 워크스페이스는 제자리에서 올립니다(컬럼·테이블 추가, 한 트랜잭션). 올릴 수 없는 변경이 나오면 파일을 보존한 채 거부합니다. 되돌리는 방법은 이전 백업을 새 디렉터리에 복원하는 것입니다.
 - 기존 11편 품질 평가는 보조 판정입니다. 안정화 후 재생성·사람 평가와 새로운 성능 측정은 별도로 진행해야 합니다.
 
 ## 테스트
 
 ```text
 uv sync --group dev
-.venv/bin/python -m pytest tests/test_local_integrity.py tests/test_local_runtime.py tests/test_local_remediation.py tests/test_wiki_search.py tests/test_cloud_only.py
+.venv/bin/python -m pytest tests/test_local_integrity.py tests/test_local_runtime.py tests/test_local_remediation.py tests/test_local_worker.py tests/test_local_checkpoint.py tests/test_local_backup.py tests/test_wiki_search.py tests/test_cloud_only.py
 ```
 
 `test_local_integrity.py`는 실제 GROBID 출력과 실제 모델 노트에서 재현한 결함을 사용자에게 보이는 불변 조건으로 고정합니다. 개발 기록에는 mock 테스트 통과와 실제 모델 검증을 구분해 기록합니다. 원본 AWS 테스트는 그대로 유지합니다.
