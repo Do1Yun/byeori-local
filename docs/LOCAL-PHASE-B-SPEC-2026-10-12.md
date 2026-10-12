@@ -103,7 +103,7 @@
 **(a) 커밋 분리.** 성격이 다른 두 묶음을 나눈다. 순서대로 실행한다.
 
 ```sh
-cd /Users/prismlab/Projects/byeori-local
+cd "$REPO"    # 저장소 루트의 절대 경로
 # 1) 안정화 (R01~R11) + 검토 문서
 git add .gitignore docs/LOCAL-DEVELOPMENT.md docs/LOCAL-LLM-REMEDIATION-SPEC-2026-10-01.md \
         docs/LOCAL-LLM-REVIEW-2026-10-01.md docs/reviews/ \
@@ -397,7 +397,7 @@ else:   지금처럼 생성·write_new → checkpoints.record(...) → record["c
 {
   "format": 1,
   "created_at": "2026-10-12T05:00:00+00:00",
-  "source_root": "/Users/.../.byeori-local",
+  "source_root": "<워크스페이스 절대 경로>",
   "schema_version": 6,
   "code_version": {"package": "0.1.0b1", "git": "a9228f0 or null"},
   "journal_mode": "wal",
@@ -488,21 +488,21 @@ migrate --plan | --apply
 구현이 아니라 문서다. Ollama는 이미 `~/Library/LaunchAgents/sh.brew.ollama.plist`로 관리된다. worker용 plist **예시**를 문서에 넣되 설치는 사람이 한다.
 
 ```xml
-<!-- ~/Library/LaunchAgents/local.byeori.worker.plist (예시; 경로는 환경에 맞게) -->
+<!-- ~/Library/LaunchAgents/local.byeori.worker.plist (예시; REPO_PATH를 저장소 절대 경로로 바꾼다) -->
 <plist version="1.0"><dict>
   <key>Label</key><string>local.byeori.worker</string>
   <key>ProgramArguments</key><array>
-    <string>/Users/prismlab/Projects/byeori-local/.venv/bin/byeori-local</string>
+    <string>REPO_PATH/.venv/bin/byeori-local</string>
     <string>--timeout</string><string>1800</string><string>worker</string>
   </array>
   <key>EnvironmentVariables</key><dict>
-    <key>BYEORI_LOCAL_DATA</key><string>/Users/prismlab/Projects/byeori-local/.byeori-local</string>
+    <key>BYEORI_LOCAL_DATA</key><string>REPO_PATH/.byeori-local</string>
     <key>BYEORI_LOCAL_MODEL</key><string>qwen3:8b</string>
     <key>BYEORI_LOCAL_EXECUTOR</key><string>worker</string>
   </dict>
   <key>KeepAlive</key><true/>
   <key>RunAtLoad</key><true/>
-  <key>StandardErrorPath</key><string>/Users/prismlab/Projects/byeori-local/.byeori-local/logs/launchd.err</string>
+  <key>StandardErrorPath</key><string>REPO_PATH/.byeori-local/logs/launchd.err</string>
 </dict></plist>
 ```
 
@@ -578,7 +578,7 @@ migrate --plan | --apply
 구현과 5절 테스트가 끝난 뒤, 아래를 **순서대로** 한다. 각 단계의 출력(JSON)을 `docs/reviews/phase-b-verification-2026-MM-DD.md`에 붙인다. 모델 재생성은 7단계 한 편만 한다.
 
 ```sh
-cd /Users/prismlab/Projects/byeori-local
+cd "$REPO"    # 저장소 루트의 절대 경로
 export BYEORI_LOCAL_DATA="$PWD/.byeori-local" BYEORI_LOCAL_MODEL=qwen3:8b
 
 # 1. MCP 서버·worker가 떠 있지 않은지 확인하고 4.0(b)의 수동 복사본이 있는지 확인
