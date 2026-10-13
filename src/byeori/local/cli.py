@@ -197,6 +197,8 @@ def main(argv=None):
     report.add_argument("--refresh", action="store_true",
                         help="Ask the model again even where an answer for that note is cached")
     report.add_argument("--show", action="store_true", help="Print the latest report's Markdown")
+    report.add_argument("--lang", choices=("en", "ko"),
+                        help="Language the model writes in (default en: translating changed numbers)")
     worker = sub.add_parser("worker", help="Run queued jobs until stopped (SIGTERM/Ctrl+C stops "
                                            "at the next safe point)")
     worker.add_argument("--once", action="store_true", help="Exit when nothing can be claimed")
@@ -348,9 +350,10 @@ def main(argv=None):
                     print(reports.read(args.template, max_chars=40000)["text"], end="")
                     return 0
                 elif args.submit:
-                    result = with_worker(service, service.submit_report(args.template, refresh=args.refresh))
+                    result = with_worker(service, service.submit_report(args.template, refresh=args.refresh,
+                                                                        language=args.lang))
                 else:
-                    result = service.run_report(args.template, refresh=args.refresh)
+                    result = service.run_report(args.template, refresh=args.refresh, language=args.lang)
             case "checkpoints":
                 service.store.paper(args.paper_id)
                 result = {"paper_id": args.paper_id, "checkpoints": [

@@ -49,6 +49,7 @@
 | schema migration | 실서비스 검증 (실제 워크스페이스를 4→6으로 올림: 논문 11·revision 27·job 51 보존, `check --deep` 문제 없음). `migrate --plan`으로 먼저 확인 가능 |
 | 무모니터 Mac 운영 절차 | 절차와 launchd 예시만 문서화. 설치와 장기 운영은 미검증 |
 | 주장↔인용 검토표 생성(`review`) | 실서비스 검증 |
+| 보고서 템플릿(catalog·compare·timeline·gaps·사용자 템플릿), 연도 수동 정정 | 실서비스 검증 (실제 11편, 2026-10-13: compare 7.3분, timeline 3분, gaps 1.4분, 코드 검사 경고 0건). 내용은 사람 검토 전 초안이며, gaps의 "이후 다룬 논문" 판정 3건 중 1건이 논리적으로 맞지 않았음 |
 | 실제 논문 다수에 대한 품질·성능 평가 | 진행 중 (`docs/evaluation/`) |
 
 ## 설치
@@ -189,6 +190,38 @@ Ollama는 `brew services`의 launchd 항목으로 이미 관리됩니다. worker
   <key>RunAtLoad</key><true/>
   <key>StandardErrorPath</key><string>REPO_PATH/.byeori-local/logs/launchd.err</string>
 </dict></plist>
+```
+
+## 보고서 템플릿
+
+질문을 매번 직접 쓰지 않고, 정해진 형식으로 모든 논문을 정리합니다.
+
+```text
+byeori-local report --list                 # 템플릿과 최근 보고서, 노트가 바뀌어 오래됐는지
+byeori-local report catalog                # 바로 실행 (모델 없음)
+byeori-local report compare --submit       # worker 큐에 넣기 (모델을 쓰는 보고서는 권장)
+byeori-local report timeline --show        # 최근 보고서 Markdown 출력
+```
+
+| 템플릿 | 내용 | 모델 호출 |
+|---|---|---|
+| `catalog` | 모든 논문 연도순 표: 학술지, 분야, 한 줄 요약, 핵심 기여, 한계 | 없음. 노트 그대로 |
+| `compare` | 같은 질문 6개(다루는 문제, 핵심 방법, 데이터·모델 규모, 평가와 주요 결과, 이전 연구 대비 개선, 저자가 밝힌 한계)에 대한 논문별 답. 요약표 + 질문별 상세, 답마다 노트 문단 `[P0042]` | 논문당 1회 |
+| `timeline` | 분야별 연도순 흐름: 개요, 시기별 서술, 문제 정의·방법·데이터·규모·평가에서 바뀐 것. 문장마다 `[Vaswani 2017]` 식 근거 | 분야당 1회 (+분류 1회) |
+| `gaps` | 앞선 논문이 밝힌 한계 → 이후 논문이 다뤘는지(해결/부분 해결/미해결/판단 어려움) → 분야에 남은 문제 | 분야당 1회 |
+
+- **근거 확인**: 모델 답은 JSON schema로 받고, 인용할 수 있는 이름을 그 노트가 인용한 문단(논문별 답)이나 그 분야의 논문(종합)으로 제한합니다. 코드가 다시 검사해 근거 없는 답은 "(근거 없어 제외)"로, 앞선 논문을 "해결한 논문"으로 든 연결은 빼고 표시합니다. 시기 밖 논문을 인용한 서술에는 "점검" 표시가 붙습니다.
+- **언어와 코드 검사**: 모델이 쓰는 답은 기본이 **영어**입니다(노트의 표현·수치를 그대로 옮김). 제목·표 머리글은 한국어입니다. `--lang ko`(또는 템플릿의 `language = "ko"`)로 한국어 답을 받을 수 있지만, 실제 11편 실행에서 qwen3:8b가 번역하며 "30 million"을 300만(10배 오류)으로, "50 million"을 50만(100배 오류)으로, "sentences without unknown words"를 "알파벳이 없는 문장"으로 바꿨습니다. 그래서 두 언어 모두 코드가 다음을 검사해 한 번 다시 요청하고, 남으면 보고서의 "점검이 필요한 답"에 표시합니다: 근거(노트 또는 카드)에 없는 수치, 만·억으로 바꾼 수치, 다른 문자 체계의 글자(실제로 "옴ิก스"에 태국 문자가 섞였음). 오역 자체는 코드로 잡을 수 없으므로 수치와 용어는 근거 문단에서 확인하세요.
+- **분야 분류**: `timeline`·`gaps`를 처음 실행하면 모델이 분야를 나눠 `<워크스페이스>/templates/fields.json`에 저장합니다. 분야 제안과 논문 배정을 두 번에 나눠 요청하고, 배정은 제안된 이름 중에서만 고르게 합니다(한 번에 요청하면 정의하지 않은 이름으로 배정함). 분야 수는 논문 3편당 1개(최소 2개)로 제한합니다(제한이 없을 때 attention·Transformer·BERT가 각각 별도 분야가 됨). 이 파일을 고치면(논문 배정, 분야 이름·설명) 그대로 따르고, 여기에 없는 새 논문만 분류합니다.
+- **재사용**: 논문별 답은 노트 본문·모델·질문이 같으면 다시 묻지 않습니다. 논문 하나를 다시 처리하면 그 논문만 새로 묻고, 연도 정정처럼 frontmatter만 바뀐 경우에는 묻지 않습니다. `--refresh`로 모두 다시 묻습니다. worker가 중간에 멈춰도 이미 쓴 답부터 이어갑니다.
+- **사용자 템플릿**: `<워크스페이스>/templates/<이름>.toml`에 질문 목록(최대 12개)을 쓰면 `report <이름>`으로 모든 논문에 같은 질문을 합니다. 예시는 `examples/report-templates/experiment-setup.toml`입니다.
+- **결과**: `<워크스페이스>/reports/<템플릿>/<job_id>/report.md`와 `report.json`(입력 노트 revision, 모델, 답 원본). 노트가 바뀌면 `report --list`의 `stale`이 true가 됩니다. MCP는 `list_reports`, `read_report`로 읽습니다.
+- **한계**: 보고서는 노트에서 만든 **초안**입니다. 노트의 귀속 오류(평가 208개 중 47개)를 그대로 물려받고, 분야당 논문이 적으면 흐름 서술은 약합니다. 수치는 근거 문단에서 확인하세요.
+
+**연도 정정.** 시간순 분석은 연도에 의존합니다. 추출과 OpenAlex가 arXiv 개정 날짜를 가져오면 손으로 고칩니다. 노트 본문은 다시 쓰지 않고, 새 revision에 `metadata_provenance`를 `manual`로 남기므로 이후 `metadata --all`이 덮어쓰지 않습니다. 문서 ID는 바꾸지 않습니다.
+
+```text
+byeori-local metadata vaswani-2023-attention-is-all-you-need --set year=2017 --set "journal=NeurIPS 2017" --reason "NeurIPS 2017 발표본"
 ```
 
 ## 백업·복원

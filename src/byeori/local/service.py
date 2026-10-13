@@ -1022,24 +1022,30 @@ class LocalService:
 
     # --- reports across papers ----------------------------------------------------------
 
-    def run_report(self, name, run=None, *, refresh=False):
+    def run_report(self, name, run=None, *, refresh=False, language=None):
         """Run one report template now, or as the worker's claimed job when run is given."""
-        from .report import Reports
+        from .report import LANGUAGES, ReportError, Reports
         reports = Reports(self)
         reports.template(name)                    # refuse an unknown template before a job exists
+        if language is not None and language not in LANGUAGES:
+            raise ReportError('language must be "en" or "ko"')
         if run is not None:
-            return reports.execute(name, run, refresh=refresh)
+            return reports.execute(name, run, refresh=refresh, language=language)
         with self._exclusive():
-            return reports.execute(name, Run(self.store.start(None, kind="report")), refresh=refresh)
+            return reports.execute(name, Run(self.store.start(None, kind="report")), refresh=refresh,
+                                   language=language)
 
-    def submit_report(self, name, *, refresh=False):
-        from .report import Reports
+    def submit_report(self, name, *, refresh=False, language=None):
+        from .report import LANGUAGES, ReportError, Reports
         Reports(self).template(name)
+        if language is not None and language not in LANGUAGES:
+            raise ReportError('language must be "en" or "ko"')
         for job in self.store.iter_jobs():
             if (job["kind"] == "report" and job["status"] in ("queued", "running")
                     and isinstance(job["request"], dict) and job["request"].get("template") == name):
                 return {"template": name, "job_id": job["job_id"], "status": "already_queued"}
-        job_id = self.store.enqueue("report", request={"template": name, "refresh": bool(refresh)})
+        job_id = self.store.enqueue("report", request={"template": name, "refresh": bool(refresh),
+                                                       "language": language})
         return {"template": name, "job_id": job_id, "status": "queued"}
 
     def _free_stem(self, stem, paper_id):

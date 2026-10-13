@@ -281,7 +281,8 @@ class Worker:
                 return self.service._revalidate(request["written_by"], run)
             case "report":
                 return self.service.run_report(request["template"], run=run,
-                                               refresh=bool(request.get("refresh")))
+                                               refresh=bool(request.get("refresh")),
+                                               language=request.get("language"))
         raise ValueError(f"Unknown job kind {job['kind']!r}")
 
     def _ensure_ended(self, job_id, exc):

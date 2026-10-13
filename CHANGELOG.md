@@ -4,6 +4,16 @@
 
 See `docs/LOCAL-DEVELOPMENT.md`. The AWS commands below are unchanged.
 
+- **Report templates (2026-10-13).** `byeori-local report catalog|compare|timeline|gaps` lays
+  every paper out in a fixed format: a chronological catalog, the same questions asked of every
+  note, a field-by-field chronology, and which stated limitation a later paper took up. Answers
+  cite note paragraphs or papers, restricted by schema and checked by code; per-paper answers are
+  cached. Answers are written in English by default (`--lang ko` for Korean): translating turned
+  "30 million" into 300만 on this workspace. Code checks every answer for numbers its source does
+  not hold, numbers converted into Korean units, and letters from other scripts. Fields are
+  classified once into an editable `templates/fields.json`; users add their own question sets as
+  `templates/<name>.toml`. `metadata --set year=… --reason …` corrects a year by
+  hand without rewriting the note.
 - **Worker, resume, backups (2026-10-12).** `byeori-local worker` runs queued jobs and outlives
   the process that submitted them (`--submit`, or `BYEORI_LOCAL_EXECUTOR=worker` for MCP
   questions); jobs are fenced to the worker that claimed them, stop and cancel before the next

@@ -113,3 +113,13 @@ def cloud_catalog(monkeypatch):
     cloud=MemoryAws()
     monkeypatch.setattr(boto3,'Session',lambda *args,**kwargs:cloud)
     return cloud
+
+
+@pytest.fixture(autouse=True)
+def _isolated_local_runtime(tmp_path, monkeypatch):
+    """No test shares this machine's Ollama endpoint lock or recovery markers with a real worker.
+
+    Tests that built an OllamaBackend without this queued behind a live worker's model calls,
+    and one that left a timeout marker would have paused that worker until a person cleared it.
+    """
+    monkeypatch.setenv("BYEORI_LOCAL_RUNTIME_DIR", str(tmp_path / "byeori-runtime"))

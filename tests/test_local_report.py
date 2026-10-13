@@ -40,7 +40,9 @@ class ReportModel(Model):
         if system.startswith("You read one Evidence Note"):
             value = self.card(data, response_format)
         elif system.startswith("You group papers"):
-            value = self.fields(data)
+            value = {"new_fields": self.fields(data)["new_fields"]}
+        elif system.startswith("You assign papers"):
+            value = {"assignments": self.fields(data)["assignments"]}
         elif system.startswith("You write the chronological"):
             value = self.timeline(data)
         else:
@@ -50,31 +52,31 @@ class ReportModel(Model):
     def card(self, data, schema):
         first = next(iter(schema["properties"]["answers"]["properties"].values()))
         cited = first["properties"]["citations"]["items"]["enum"]
-        return {"answers": {q["id"]: {"found": True, "short": f"{q['id']} 요약",
-                                      "detail": f"{q['id']} 자세한 답", "citations": [cited[0]]}
+        return {"answers": {q["id"]: {"found": True, "short": f"{q['id']} in short",
+                                      "detail": f"{q['id']} in detail", "citations": [cited[0]]}
                             for q in data["questions"]}}
 
     def fields(self, data):
-        names = {"Language": "언어 모델 (language models)", "Cell": "세포 모델 (cell models)"}
-        existing = {field["name"] for field in data["existing_fields"]}
+        names = {"Language": "Language models", "Cell": "Cell models"}
+        existing = {field["name"] for field in data.get("existing_fields", [])}
         assignments = {paper["id"]: names[paper["title"].split()[0]] for paper in data["papers"]}
-        return {"new_fields": [{"name": name, "description": f"{name} 설명"}
+        return {"new_fields": [{"name": name, "description": f"Papers on {name.lower()}"}
                                for name in sorted(set(assignments.values())) if name not in existing],
                 "assignments": assignments}
 
     def timeline(self, data):
         labels = [paper["label"] for paper in data["papers"]]
         years = [paper["year"] for paper in data["papers"]]
-        return {"overview": "흐름 개요", "overview_citations": labels[:1],
-                "periods": [{"from_year": min(years), "to_year": max(years), "text": "기간 서술",
+        return {"overview": "How the field moved", "overview_citations": labels[:1],
+                "periods": [{"from_year": min(years), "to_year": max(years), "text": "The period in brief",
                              "citations": labels}],
-                "shifts": [{"aspect": "방법", "text": "방법이 바뀜", "citations": labels[-1:]}]}
+                "shifts": [{"aspect": "방법", "text": "The method changed", "citations": labels[-1:]}]}
 
     def gaps(self, data):
         labels = [paper["label"] for paper in data["papers"]]
-        return {"items": [{"limitation": "데이터가 적다", "source": labels[0], "status": "addressed",
-                           "addressed_by": labels[1:], "how": "더 큰 데이터로 학습"}],
-                "open_problems": [{"text": "평가 기준이 없다", "citations": labels[-1:]}]}
+        return {"items": [{"limitation": "Too little data", "source": labels[0], "status": "addressed",
+                           "addressed_by": labels[1:], "how": "Trained on more data"}],
+                "open_problems": [{"text": "No shared benchmark", "citations": labels[-1:]}]}
 
 
 def add_paper(store, path, key):
@@ -146,7 +148,7 @@ def test_compare_asks_each_note_once_and_reuses_answers(corpus):
     assert first["status"] == "complete" and model.report_calls.count("read one") == 3
     assert first["cards_created"] == 3 and first["cards_reused"] == 0
     text = service.store.path(first["report"]).read_text()
-    assert "| 논문 | 다루는 문제 | 핵심 방법 |" in text and "problem 자세한 답 [P0001]" in text
+    assert "| 논문 | 다루는 문제 | 핵심 방법 |" in text and "problem in detail [P0001]" in text
     model.report_calls.clear()
     service.correct_metadata(ids["cell-c"], {"journal": "Cell Journal"}, "venue known")
     again = service.run_report("compare")
@@ -174,41 +176,65 @@ def test_an_answer_without_a_cited_paragraph_is_withheld(corpus):
     assert "(근거 없어 제외)" in service.store.path(result["report"]).read_text()
 
 
-def test_chinese_characters_are_asked_again_then_flagged(corpus):
+def test_text_code_can_check_is_asked_again_then_flagged(corpus):
+    """Numbers the note does not hold, Korean units and stray scripts are what went wrong here."""
     service, model, _ = corpus
     attempts = []
 
     def card(data, schema):
         attempts.append(1)
         value = ReportModel.card(model, data, schema)
-        value["answers"]["problem"]["short"] = "問題 정의"
+        value["answers"]["problem"]["detail"] = "Trained on 300 cells, 問題."
         return value
 
     model.card = card
     result = service.run_report("compare")
     assert len(attempts) == 6, "each paper asked twice"
     text = service.store.path(result["report"]).read_text()
-    assert "한자가 섞인 답" in text
+    assert "## 점검이 필요한 답" in text
+    assert "numbers not in the source: 300" in text and "letters from another script: 問 題" in text
+
+
+def test_korean_answers_may_not_convert_numbers_into_korean_units(corpus):
+    service, model, _ = corpus
+
+    def card(data, schema):
+        assert "never as 만 or 억" in model.last_system
+        value = ReportModel.card(model, data, schema)
+        value["answers"]["data_scale"]["detail"] = "모델은 3000만 개의 세포로 학습했다."
+        return value
+
+    original = model.generate
+
+    def generate(system, prompt, **options):
+        model.last_system = system
+        return original(system, prompt, **options)
+
+    model.generate, model.card = generate, card
+    result = service.run_report("compare", language="ko")
+    text = service.store.path(result["report"]).read_text()
+    assert "모델 답 언어 한국어" in text and "numbers converted into Korean units (3000만)" in text
+    assert report_json(service, result)["language"] == "ko"
 
 
 def test_fields_are_classified_once_and_edits_are_respected(corpus):
     service, model, ids = corpus
     result = service.run_report("timeline")
-    assert model.report_calls.count("group papers") == 1
+    assert model.report_calls.count("group papers") == model.report_calls.count("assign papers") == 1
     saved = json.loads(service.store.path(FIELDS_PATH).read_text())
-    assert set(saved["fields"]) == {"언어 모델 (language models)", "세포 모델 (cell models)"}
+    assert set(saved["fields"]) == {"Language models", "Cell models"}
     assert "_how_to_edit" in saved
     text = service.store.path(result["report"]).read_text()
-    assert "## 언어 모델 (language models) — 논문 2편 (2017–2019)" in text
+    assert "## Language models — 논문 2편 (2017–2019)" in text
     assert "[Language 2017][Language 2019]" in text.replace("] [", "][")
     assert "흐름을 서술하지 않았습니다" in text, "a one-paper field gets no synthesis"
     assert model.report_calls.count("write the") == 1
     stem = service.store.paper(ids["cell-c"])["stem"]
-    saved["papers"][stem] = "언어 모델 (language models)"
+    saved["papers"][stem] = "Language models"
     service.store.path(FIELDS_PATH).write_text(json.dumps(saved, ensure_ascii=False))
     model.report_calls.clear()
     again = service.run_report("timeline")
-    assert "group papers" not in model.report_calls
+    assert "group papers" not in model.report_calls and "assign papers" not in model.report_calls
     assert "논문 3편 (2017–2021)" in service.store.path(again["report"]).read_text()
 
 
@@ -218,7 +244,7 @@ def test_timeline_flags_a_period_that_cites_a_paper_outside_it(corpus):
     def timeline(data):
         value = ReportModel.timeline(model, data)
         first = data["papers"][0]["year"]
-        value["periods"] = [{"from_year": first, "to_year": first, "text": "첫 해", "citations":
+        value["periods"] = [{"from_year": first, "to_year": first, "text": "The first year", "citations":
                              [paper["label"] for paper in data["papers"]]}]
         return value
 
@@ -232,8 +258,8 @@ def test_gaps_drop_a_solution_published_before_the_problem(corpus):
 
     def gaps(data):
         labels = [paper["label"] for paper in data["papers"]]
-        return {"items": [{"limitation": "느리다", "source": labels[-1], "status": "addressed",
-                           "addressed_by": labels[:1], "how": "빠르게 함"}], "open_problems": []}
+        return {"items": [{"limitation": "It is slow", "source": labels[-1], "status": "addressed",
+                           "addressed_by": labels[:1], "how": "Made faster"}], "open_problems": []}
 
     model.gaps = gaps
     result = service.run_report("gaps")
@@ -246,8 +272,8 @@ def test_gaps_drop_a_solution_published_before_the_problem(corpus):
 def test_gaps_render_who_took_up_which_limitation(corpus):
     service, _, _ = corpus
     text = service.store.path(service.run_report("gaps")["report"]).read_text()
-    assert "| 데이터가 적다 | [Language 2017] | [Language 2019] | 해결 | 더 큰 데이터로 학습 |" in text
-    assert "### 남은 문제" in text and "평가 기준이 없다 [Language 2019]" in text
+    assert "| Too little data | [Language 2017] | [Language 2019] | 해결 | Trained on more data |" in text
+    assert "### 남은 문제" in text and "No shared benchmark [Language 2019]" in text
 
 
 def test_a_user_template_asks_its_own_questions_and_a_broken_one_is_named(corpus):
@@ -361,3 +387,22 @@ def test_backups_carry_reports_and_field_assignments(corpus, tmp_path):
     paths = {item["path"] for item in manifest["files"]}
     assert FIELDS_PATH in paths and any(p.startswith("reports/timeline/") for p in paths)
     assert result["verified"]
+
+
+def test_a_paper_can_only_be_assigned_a_listed_field(corpus):
+    """qwen3:8b once assigned papers to field names it had never defined."""
+    service, model, _ = corpus
+    seen = []
+    original = model.generate
+
+    def generate(system, prompt, **options):
+        if system.startswith("You assign papers"):
+            seen.append(options["response_format"]["properties"]["assignments"])
+        return original(system, prompt, **options)
+
+    model.generate = generate
+    service.run_report("timeline")
+    [assignments] = seen
+    enums = {tuple(rule["enum"]) for rule in assignments["properties"].values()}
+    assert enums == {("Cell models", "Language models")} or \
+        enums == {("Language models", "Cell models")}
