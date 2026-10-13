@@ -948,6 +948,100 @@ class LocalService:
         return {"paper_id": paper_id, "job_id": job_id, "changed": True, "state": found.get("state"),
                 "previous_stem": paper.get("stem"), **changes, **published}
 
+    # A person's correction, field by field. The year is what a chronology is ordered by, and
+    # the extraction and OpenAlex both read Attention Is All You Need as 2023 (its last arXiv
+    # revision) and Bahdanau et al. as 2016, which put the Transformer after BERT.
+    MANUAL_FIELDS = {"year": re.compile(r"(19|20)\d{2}"), "journal": re.compile(r"\S.{0,199}"),
+                     "doi": re.compile(r"10\.\d{4,9}/\S{1,200}")}
+
+    def correct_metadata(self, paper_id, values, reason):
+        """Set a published paper's year, journal or DOI by hand, without writing its note again.
+
+        The value is marked manual in metadata_provenance, so a later `metadata --all` records
+        what OpenAlex says beside it instead of replacing it. The document id is not changed: it
+        is the paper's identity, and citations and review sheets already name it.
+        """
+        with self._exclusive():
+            return self._correct(paper_id, values, reason)
+
+    def _correct(self, paper_id, values, reason):
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 300:
+            raise ValueError("Give a reason of 1 to 300 characters for a manual correction")
+        if not values:
+            raise ValueError("Give at least one field to set, as KEY=VALUE")
+        for key, value in values.items():
+            pattern = self.MANUAL_FIELDS.get(key)
+            if pattern is None:
+                raise ValueError(f"Only {', '.join(self.MANUAL_FIELDS)} can be set by hand")
+            if not isinstance(value, str) or not pattern.fullmatch(value.strip()):
+                raise ValueError(f"Invalid value for {key}: {value!r}")
+        resolved = self.store.paper_for_stem(paper_id) or paper_id
+        paper = self.store.paper(resolved)
+        note = self.store.note(paper["paper_id"])
+        fields, body = parse_frontmatter(note["text"])
+        provenance = dict(fields.get("metadata_provenance") or {})
+        changes = {key: value.strip() for key, value in values.items()
+                   if str(fields.get(key) or "") != value.strip()}
+        if not changes:
+            return {"paper_id": paper["paper_id"], "stem": paper["stem"], "changed": False}
+        for key in changes:
+            provenance[key] = "manual"
+        self.store.record_metadata_check(paper["paper_id"], {
+            "state": "manual", "reason": reason.strip(),
+            "changes": {key: {"from": fields.get(key), "to": value} for key, value in changes.items()}})
+        job_id = self.store.start(paper["paper_id"], kind="metadata")
+        record = {"job_id": job_id, "kind": "metadata", "paper_id": paper["paper_id"],
+                  "stage": "metadata", "started_at": now(), "manual": changes, "reason": reason.strip()}
+        try:
+            front = fields | changes | {"metadata_provenance": provenance,
+                                        "revision_reason": "metadata-corrected", "created": now()}
+            page = frontmatter_text(front) + body
+            metadata = {"title": front.get("title") or paper["title"],
+                        "year": str(front.get("year") or ""), "journal": front.get("journal") or "",
+                        "doi": front.get("doi") or "", "work_id": front.get("work_ids") or None}
+            result_info = {"job_id": job_id, "paper_id": paper["paper_id"], "stem": paper["stem"],
+                           "status": "succeeded", "revision_reason": "metadata-corrected",
+                           "extraction_status": note["extraction_status"],
+                           "validation_level": note["validation_level"], "manual": changes,
+                           "coverage": {"path": "unchanged", "parts": 0, "blocks_total": 0,
+                                        "blocks_presented": 0}}
+            published = self.store.publish(
+                paper, job_id, page, extraction_id=note["extraction_id"],
+                extraction_path=note["extraction_path"], extraction_status=note["extraction_status"],
+                model=note["model"], validation_level=note["validation_level"], result=result_info,
+                stem=paper["stem"], metadata=metadata, summary=note_summary(page),
+                previous_stem=paper.get("stem"), document_sha256=note.get("document_sha256"))
+        except Exception as exc:
+            self.store.finish(job_id, "failed", error=str(exc), stage="metadata", error_code="failed")
+            self._save_receipt(f"runs/{job_id}", record | {"outcome": "failed", "error": str(exc)})
+            raise JobFailed(f"Job {job_id} failed: {exc}") from exc
+        self._save_receipt(f"runs/{job_id}", record | {"outcome": "succeeded",
+                                                      "revision_id": published["revision_id"]})
+        return {"paper_id": paper["paper_id"], "job_id": job_id, "changed": True, "set": changes,
+                "reason": reason.strip(), **published}
+
+    # --- reports across papers ----------------------------------------------------------
+
+    def run_report(self, name, run=None, *, refresh=False):
+        """Run one report template now, or as the worker's claimed job when run is given."""
+        from .report import Reports
+        reports = Reports(self)
+        reports.template(name)                    # refuse an unknown template before a job exists
+        if run is not None:
+            return reports.execute(name, run, refresh=refresh)
+        with self._exclusive():
+            return reports.execute(name, Run(self.store.start(None, kind="report")), refresh=refresh)
+
+    def submit_report(self, name, *, refresh=False):
+        from .report import Reports
+        Reports(self).template(name)
+        for job in self.store.iter_jobs():
+            if (job["kind"] == "report" and job["status"] in ("queued", "running")
+                    and isinstance(job["request"], dict) and job["request"].get("template") == name):
+                return {"template": name, "job_id": job["job_id"], "status": "already_queued"}
+        job_id = self.store.enqueue("report", request={"template": name, "refresh": bool(refresh)})
+        return {"template": name, "job_id": job_id, "status": "queued"}
+
     def _free_stem(self, stem, paper_id):
         """A document id no other paper here already holds."""
         candidate, suffix = stem, 1

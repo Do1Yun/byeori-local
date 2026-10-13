@@ -289,3 +289,18 @@ def test_checkpoints_listing_names_stage_job_and_files(paper, monkeypatch, capsy
     listed = json.loads(capsys.readouterr().out)["checkpoints"]
     assert sorted(item["stage"] for item in listed) == ["digest"] * 3 + ["extraction"]
     assert all(item["job_id"] == failed["job_id"] and item["files"] for item in listed)
+
+
+def test_a_caller_can_hold_a_json_prompt_to_its_own_truncation_ratio():
+    """A JSON prompt read at 0.548 of its estimate is not a truncated one at 0.35."""
+    def chat(request):
+        body = json.loads(request.content)
+        estimated = estimate_tokens(body["messages"][0]["content"] + body["messages"][1]["content"])
+        return httpx.Response(200, json={"done": True, "done_reason": "stop", "message": {"content": "{}"},
+                                         "prompt_eval_count": int(estimated * 0.5)})
+
+    backend = OllamaBackend("test", transport=ollama_transport(chat))
+    with pytest.raises(ModelError, match="truncated"):
+        backend.generate("system", '{"a": [1, 2, 3]}' * 40)
+    result = backend.generate("system", '{"a": [1, 2, 3]}' * 40, truncation_ratio=0.35)
+    assert result.metadata["truncation_ratio"] == 0.35

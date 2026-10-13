@@ -18,7 +18,7 @@ from byeori.wiki_search import search_index
 SCHEMA_VERSION = 6
 JOB_STATUSES = ("queued", "running", "succeeded", "failed", "cancelled", "interrupted")
 TERMINAL_STATUSES = ("succeeded", "failed", "cancelled", "interrupted")
-JOB_KINDS = ("note", "question", "metadata", "revalidate")
+JOB_KINDS = ("note", "question", "metadata", "revalidate", "report")
 # inline: run by the process that submitted it (the CLI in the foreground, or the MCP server's
 # question thread). worker: left in the queue for `byeori-local worker`, which may be another
 # process entirely. A row written before this column existed is inline.

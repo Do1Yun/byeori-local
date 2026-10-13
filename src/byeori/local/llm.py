@@ -246,18 +246,25 @@ class OllamaBackend:
                 "template_sha256": hashlib.sha256(str(show.get("template", "")).encode()).hexdigest(),
                 "recovery_pending": self.recovery_pending()}
 
-    def generate(self, system, prompt, *, think=None, response_format=None, num_predict=None):
+    def generate(self, system, prompt, *, think=None, response_format=None, num_predict=None,
+                 truncation_ratio=None):
         with inference_lock(self.url):
             # Holding the lock, any marker left here belongs to a process that is gone.
             if self.blocked_path.exists() or self.inflight_path.exists():
                 raise RecoveryPending("Endpoint recovery_pending after an unfinished request; "
                                       "confirm the server is idle before retrying")
             return self._generate(system, prompt, think=think, response_format=response_format,
-                                  num_predict=num_predict)
+                                  num_predict=num_predict, truncation_ratio=truncation_ratio)
 
-    def _generate(self, system, prompt, *, think=None, response_format=None, num_predict=None):
+    def _generate(self, system, prompt, *, think=None, response_format=None, num_predict=None,
+                  truncation_ratio=None):
         if not self.model:
             raise ModelError("Set BYEORI_LOCAL_MODEL or --model to an installed Ollama model")
+        # The estimator was calibrated on paper text; a caller whose prompt is mostly JSON, which
+        # it overcounts, passes the ratio measured for that kind of prompt.
+        ratio = self.truncation_ratio if truncation_ratio is None else truncation_ratio
+        if not 0 < ratio <= 1:
+            raise ValueError("Truncation ratio must be between 0 and 1")
         output = self.output if num_predict is None else int(num_predict)
         if output < 1:
             raise ValueError("num_predict must be positive")
@@ -306,7 +313,7 @@ class OllamaBackend:
         if not isinstance(text, str) or not text.strip():
             raise ModelError("Model returned no answer text")
         measured = int(value.get("prompt_eval_count", 0))
-        if measured and measured < estimated * self.truncation_ratio:
+        if measured and measured < estimated * ratio:
             # The server read far less than this input holds, which is what its silent
             # truncation looks like. A note from part of a paper must not be published.
             raise ModelError(f"The model reported reading {measured} prompt tokens for an input "
@@ -320,5 +327,5 @@ class OllamaBackend:
                            "payload_sha256": hashlib.sha256(payload).hexdigest(),
                            "think": body.get("think"), "input_estimate": estimated,
                            "done_reason": value.get("done_reason"), "num_predict": output,
-                           "truncation_ratio": self.truncation_ratio,
+                           "truncation_ratio": ratio,
                            "token_accounting": "reported" if measured else "unverified"})

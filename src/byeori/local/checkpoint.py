@@ -16,7 +16,7 @@ from .store import digest, now
 
 # Raise when parse_tei or the document.json shape changes: earlier extractions then stop matching.
 EXTRACTION_SCHEMA = 1
-STAGES = ("extraction", "digest", "digest-truncated")
+STAGES = ("extraction", "digest", "digest-truncated", "report-row")
 
 
 def key(stage, **inputs):

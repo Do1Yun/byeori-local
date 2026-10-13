@@ -64,6 +64,23 @@ def create_server(service=None):
         return questions().submit(question, paper_id)
 
     @mcp.tool()
+    def list_reports() -> dict:
+        """Report templates (catalog, compare, timeline, gaps and any templates/*.toml) and their
+        latest reports, each marked stale when a note changed or a paper was added since."""
+        from .report import Reports
+        return Reports(current()).list_reports()
+
+    @mcp.tool()
+    def read_report(template: str, start: int = 0, max_chars: int = 8000) -> dict:
+        """Read the latest report of one template in windows; pass next_start back to continue.
+
+        Reports are drafts written from the notes by the local model; every statement names the
+        paper or paragraph it rests on, and numbers should be checked with read_paper_context.
+        """
+        from .report import Reports
+        return Reports(current()).read(template, start=start, max_chars=max_chars)
+
+    @mcp.tool()
     def worker_status() -> dict:
         """The workspace worker: whether it is alive, its state, and the job it is running."""
         service = current()

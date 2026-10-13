@@ -1,0 +1,31 @@
+# Copy into <workspace>/templates/experiment-setup.toml, then:
+#   byeori-local report experiment-setup
+# Every question is asked of every paper's note. Answers cite the note's paragraphs; a question
+# the note does not answer shows as "노트에 없음". At most 12 questions; ids use a-z, 0-9 and _.
+title = "실험 설정 비교"
+description = "학습 설정과 재현에 필요한 정보"
+
+[[questions]]
+id = "pretraining_data"
+label = "사전학습 데이터"
+ask = "Which datasets were used for pretraining, how many samples or cells, and how were they filtered?"
+
+[[questions]]
+id = "model_size"
+label = "모델 크기"
+ask = "How many parameters, layers and attention heads does the model have?"
+
+[[questions]]
+id = "compute"
+label = "학습 자원"
+ask = "What hardware and training time were reported?"
+
+[[questions]]
+id = "baselines"
+label = "비교 대상"
+ask = "Which baseline methods is the model compared against?"
+
+[[questions]]
+id = "code"
+label = "코드·가중치 공개"
+ask = "Are code and model weights released, and where?"

@@ -186,6 +186,17 @@ def main(argv=None):
     meta.add_argument("paper_id", nargs="?")
     meta.add_argument("--all", action="store_true")
     meta.add_argument("--submit", action="store_true", help="Queue it for the worker instead")
+    meta.add_argument("--set", action="append", metavar="KEY=VALUE", dest="assignments",
+                      help="Correct year, journal or doi by hand (repeatable); needs --reason")
+    meta.add_argument("--reason", help="Why the value is corrected, kept with the correction")
+    report = sub.add_parser("report", help="Run a fixed report over every paper: catalog, compare, "
+                                           "timeline, gaps, or a templates/<name>.toml")
+    report.add_argument("template", nargs="?")
+    report.add_argument("--list", action="store_true", help="Templates and their latest reports")
+    report.add_argument("--submit", action="store_true", help="Queue it for the worker instead")
+    report.add_argument("--refresh", action="store_true",
+                        help="Ask the model again even where an answer for that note is cached")
+    report.add_argument("--show", action="store_true", help="Print the latest report's Markdown")
     worker = sub.add_parser("worker", help="Run queued jobs until stopped (SIGTERM/Ctrl+C stops "
                                            "at the next safe point)")
     worker.add_argument("--once", action="store_true", help="Exit when nothing can be claimed")
@@ -307,7 +318,17 @@ def main(argv=None):
             case "metadata":
                 if args.all == bool(args.paper_id):
                     raise ValueError("Give a paper ID or --all, not both")
-                if args.submit:
+                if args.assignments:
+                    if args.all or args.submit:
+                        raise ValueError("--set corrects one paper, in the foreground")
+                    values = {}
+                    for assignment in args.assignments:
+                        key, separator, value = assignment.partition("=")
+                        if not separator:
+                            raise ValueError(f"Write --set as KEY=VALUE, not {assignment!r}")
+                        values[key.strip()] = value
+                    result = service.correct_metadata(args.paper_id, values, args.reason)
+                elif args.submit:
                     result = with_worker(service, service.submit_metadata(args.paper_id))
                 else:
                     result = service.refresh_all() if args.all else service.refresh_metadata(args.paper_id)
@@ -318,6 +339,18 @@ def main(argv=None):
                                 resume_interrupted=not args.no_resume_interrupted,
                                 log_dir=args.log_dir, install_signals=True,
                                 prevent_sleep=not args.allow_sleep).run()
+            case "report":
+                from .report import Reports
+                reports = Reports(service)
+                if args.list or not args.template:
+                    result = reports.list_reports()
+                elif args.show:
+                    print(reports.read(args.template, max_chars=40000)["text"], end="")
+                    return 0
+                elif args.submit:
+                    result = with_worker(service, service.submit_report(args.template, refresh=args.refresh))
+                else:
+                    result = service.run_report(args.template, refresh=args.refresh)
             case "checkpoints":
                 service.store.paper(args.paper_id)
                 result = {"paper_id": args.paper_id, "checkpoints": [
@@ -368,6 +401,8 @@ def main(argv=None):
         if isinstance(result, dict):
             if result.get("status") in {"failed", "interrupted"}:
                 return 1
+            if result.get("status") == "partial":
+                return 3
             if result.get("failed") or (result.get("processing") or {}).get("failed"):
                 return 3
             if result.get("conflicts"):

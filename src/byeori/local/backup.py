@@ -23,7 +23,7 @@ import time
 from .store import SCHEMA_VERSION, LocalStore, code_version, now
 
 BACKUP_FORMAT = 1
-INCLUDED_DIRS = ("papers", "wiki", "runs", "quarantine", "logs")
+INCLUDED_DIRS = ("papers", "wiki", "runs", "quarantine", "logs", "reports", "templates")
 SKIPPED_NAMES = {".DS_Store"}
 
 
